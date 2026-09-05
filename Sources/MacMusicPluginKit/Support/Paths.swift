@@ -23,8 +23,10 @@ public enum Paths {
     /// User-chosen cover images, kept for the life of the track that references them.
     public static let covers: URL = support.appendingPathComponent("covers", isDirectory: true)
 
-    /// OpenSSH `ControlMaster` sockets for multiplexed remote streaming. Cleared on quit.
-    public static let sshControl: URL = support.appendingPathComponent("ssh", isDirectory: true)
+    /// OpenSSH `ControlMaster` sockets for multiplexed remote streaming. Lives
+    /// under a short `/tmp/mmp-<uid>` path — a `sockaddr_un` cannot hold an
+    /// Application Support path plus the 64-char `%C` hash. Cleared on quit.
+    public static var sshControl: URL { RuntimeDir.ssh }
 
     /// `~/Library/Caches/MacMusicPlugin` — downloaded track bodies, extracted art,
     /// anything safe to lose.
@@ -43,16 +45,18 @@ public enum Paths {
 
     /// Creates every directory the app writes into. Safe to call repeatedly.
     public static func bootstrap() {
-        for dir in [support, library, covers, sshControl, caches, scratch, nowPlayingArtwork] {
+        for dir in [support, library, covers, caches, scratch, nowPlayingArtwork] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
+        _ = RuntimeDir.ssh
     }
 
     /// Wipes volatile directories. Call on launch and on quit.
     public static func clearVolatile() {
-        for dir in [sshControl, scratch, nowPlayingArtwork] {
+        for dir in [scratch, nowPlayingArtwork] {
             try? FileManager.default.removeItem(at: dir)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
+        RuntimeDir.clean()
     }
 }

@@ -14,10 +14,15 @@ jobs:
       - name: Swift version
         run: swift --version
 
+      # Debug build first — it compiles every target (incl. MMPTests) and gives
+      # clearer diagnostics than the filtered release build.
+      - name: Build (debug, all targets)
+        run: swift build
+
       # Release build is the shippable executable only. MMPTests uses
       # `@testable import`, which needs `-enable-testing` (debug-only), so it is
       # never built in release — it runs below in its own (debug) step.
-      - name: Build
+      - name: Build (release)
         run: swift build -c release --product MacMusicPlugin
 
       - name: Test

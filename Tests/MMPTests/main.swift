@@ -52,5 +52,6 @@ RemoteLoaderTests.register()
 MetadataCoverTests.register()
 EngineLibraryTests.register()
 ScanTests.register()
+RuntimeDirTests.register()
 
 await Harness.run()

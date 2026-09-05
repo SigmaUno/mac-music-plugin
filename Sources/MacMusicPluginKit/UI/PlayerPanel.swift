@@ -6,6 +6,7 @@ import SwiftUI
 public struct PlayerPanel: View {
     private let engine: PlayerEngine
     @State private var showCoverPicker = false
+    @State private var openAtLogin = LoginItem.isEnabled
 
     public init(engine: PlayerEngine) {
         self.engine = engine
@@ -35,8 +36,10 @@ public struct PlayerPanel: View {
 
             Divider()
             HStack {
-                Button("Unlock SSH agent…", action: engine.unlockSSHAgent)
+                Toggle("Open at Login", isOn: Binding(get: { openAtLogin }, set: setOpenAtLogin))
+                    .toggleStyle(.checkbox)
                 Spacer()
+                Button("Unlock SSH agent…", action: engine.unlockSSHAgent)
                 Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut("q")
             }
             .font(.callout)
@@ -105,6 +108,15 @@ public struct PlayerPanel: View {
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+    }
+
+    private func setOpenAtLogin(_ on: Bool) {
+        do {
+            try LoginItem.setEnabled(on)
+            openAtLogin = LoginItem.isEnabled
+        } catch {
+            openAtLogin = LoginItem.isEnabled
+        }
     }
 
     private func chooseCoverFile() {

@@ -28,8 +28,6 @@ sed -e "s/__VERSION__/$version/g" -e "s/__BUILD__/$build_number/g" \
 
 if [ -f "$root/Resources/AppIcon.icns" ]; then
     cp "$root/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
-    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" \
-        "$app/Contents/Info.plist" 2>/dev/null || true
 fi
 
 printf 'APPL????' > "$app/Contents/PkgInfo"
