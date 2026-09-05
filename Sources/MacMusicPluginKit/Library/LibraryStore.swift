@@ -277,6 +277,15 @@ public final class LibraryStore {
 
     // MARK: Directory-scan staging
 
+    /// Writes (replacing) the `INCOMING >> <target> <<` staging playlist a
+    /// directory scan produces. Mirrors the staging-file write in `scan_worker`
+    /// (backend/app.c:3301).
+    public func writeStaging(target: String, tracks: [Track]) throws {
+        guard PlaylistName.isValid(target) else { throw LibraryError.invalidPlaylistName(target) }
+        try AtomicFile.writeJSON(PlaylistFile(version: 1, tracks: tracks),
+                                 to: fileURL(for: PlaylistName.incomingName(for: target)))
+    }
+
     /// Moves the named tracks from a `INCOMING >> target <<` playlist into
     /// `target`, then drops them from staging (deleting the file when it empties).
     /// Mirrors the accept branch of `handle_accept_decline` (backend/app.c:3645).

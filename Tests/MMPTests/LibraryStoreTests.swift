@@ -174,10 +174,9 @@ enum LibraryStoreTests {
     }
 }
 
-// Test-only helper to stand up a staging playlist without the scanner.
+// Test-only alias so existing cases keep reading naturally.
 extension LibraryStore {
     func createStagingForTest(target: String, tracks: [Track]) throws {
-        let name = PlaylistName.incomingName(for: target)
-        try save(Playlist(name: name, tracks: tracks))
+        try writeStaging(target: target, tracks: tracks)
     }
 }

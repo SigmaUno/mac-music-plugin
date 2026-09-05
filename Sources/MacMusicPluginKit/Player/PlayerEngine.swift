@@ -201,6 +201,113 @@ public final class PlayerEngine {
         }
     }
 
+    /// Adds an `https` / `ssh` / `network` source to the viewed playlist. For an
+    /// `https` URL AVFoundation can read tags off the remote asset; `ssh` /
+    /// `network` fall back to the file name (the C backend probes over ssh, which
+    /// this deliberately skips — the user can edit the row).
+    public func addRemoteSource(kind: SourceKind, username: String = "", host: String = "",
+                                remotePath: String = "", url: String = "") async {
+        let source: Source
+        var probeURL: URL?
+        var fallback: String
+        switch kind {
+        case .https:
+            guard url.lowercased().hasPrefix("https://") else {
+                statusText = "Only https:// URLs are supported."; return
+            }
+            source = Source(kind: .https, url: url)
+            probeURL = URL(string: url)
+            fallback = ((url as NSString).lastPathComponent as NSString).deletingPathExtension
+        case .ssh, .network:
+            guard !username.isEmpty, !host.isEmpty, !remotePath.isEmpty else {
+                statusText = "Enter the user, host and remote path."; return
+            }
+            guard RemoteCommand.isValidName(username, allowColon: false),
+                  RemoteCommand.isValidName(host, allowColon: true) else {
+                statusText = "That username or host has characters that are not allowed."; return
+            }
+            source = Source(kind: kind, path: remotePath, username: username, ip: host)
+            fallback = ((remotePath as NSString).lastPathComponent as NSString).deletingPathExtension
+        case .local:
+            statusText = "Use “Add local file” for local sources."; return
+        }
+        if fallback.isEmpty { fallback = kind.displayName }
+
+        let tags = probeURL.map { url in Task { await self.metadata.read(url) } }
+        let extracted = await tags?.value ?? ExtractedMetadata()
+        do {
+            try library.addSource(source,
+                                  metadata: extracted.trackMetadata(fallbackTitle: fallback),
+                                  toPlaylist: viewedPlaylist)
+            statusText = extracted.isEmpty
+                ? "Added \(fallback) — imported by name; edit the row to fix the tags."
+                : "Added \(extracted.title ?? fallback)."
+            reloadViewed()
+        } catch {
+            statusText = "Could not add that source: \(describe(error))"
+        }
+    }
+
+    /// Rewrites a track's display fields in the viewed playlist.
+    public func editTrack(id: String, title: String, artist: String, album: String) {
+        do {
+            try library.updateTrack(id: id, in: viewedPlaylist,
+                                    title: title, artist: artist, album: album)
+            reloadViewed()
+            if viewedPlaylist == playingPlaylist, selectedIndex >= 0,
+               selectedIndex < playingTracks.count, playingTracks[selectedIndex].id == id {
+                self.title = title.isEmpty ? "No song loaded" : title
+                self.artist = artist.isEmpty ? "No Artist" : artist
+                self.album = album.isEmpty ? "No Album" : album
+            }
+            statusText = "Updated \(title)."
+        } catch {
+            statusText = describe(error)
+        }
+    }
+
+    /// Removes a track from the viewed playlist. If it was the playing row,
+    /// `syncPlayingTracks` steps playback forward or stops.
+    public func removeTrack(id: String) {
+        do {
+            try library.removeTrack(id: id, from: viewedPlaylist)
+            reloadViewed()
+            statusText = "Removed from \(viewedPlaylist)."
+        } catch {
+            statusText = describe(error)
+        }
+    }
+
+    // MARK: Directory-scan staging review
+
+    public var viewedIncomingTarget: String? { PlaylistName.incomingTarget(of: viewedPlaylist) }
+
+    public func acceptIncoming(trackIDs: [String]) {
+        applyIncoming(trackIDs) { try self.library.acceptIncoming(trackIDs: $0, from: self.viewedPlaylist) }
+    }
+
+    public func declineIncoming(trackIDs: [String]) {
+        applyIncoming(trackIDs) { try self.library.declineIncoming(trackIDs: $0, from: self.viewedPlaylist) }
+    }
+
+    private func applyIncoming(_ ids: [String], _ action: ([String]) throws -> Void) {
+        guard !ids.isEmpty, let target = viewedIncomingTarget else { return }
+        let staging = viewedPlaylist
+        do {
+            try action(ids)
+            refreshPlaylists()
+            // The staging file is deleted when it empties; fall back to its target.
+            if !library.playlistExists(staging) {
+                viewPlaylist(library.playlistNames().contains(target) ? target : (library.playlistNames().first ?? PlaylistName.home))
+            } else {
+                reloadViewed()
+            }
+            statusText = "Reviewed \(ids.count) track\(ids.count == 1 ? "" : "s")."
+        } catch {
+            statusText = describe(error)
+        }
+    }
+
     // MARK: Transport
 
     /// Play row `index` of the *viewed* playlist, adopting it as the playing one.
