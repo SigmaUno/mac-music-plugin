@@ -373,7 +373,10 @@ public final class PlayerEngine {
             }
             self.scanCount = tracks.count
             self.isScanning = false
-            if self.viewedPlaylist == staging { self.reloadViewed() } else { self.refreshPlaylists() }
+            // Always land the user on the staging list with the results loaded,
+            // even if they browsed away while the scan ran.
+            self.refreshPlaylists()
+            self.viewPlaylist(staging)
             self.statusText = tracks.isEmpty
                 ? "Scan found no audio files in that directory."
                 : "Scan done: \(tracks.count) file\(tracks.count == 1 ? "" : "s") staged in “\(staging)”. Accept or decline them."
