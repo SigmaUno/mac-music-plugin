@@ -68,6 +68,7 @@ public final class PlayerEngine {
     private var ticker: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
     private var coverTask: Task<Void, Never>?
+    private var backfillTask: Task<Void, Never>?
     private var lastResumeWrite = Date.distantPast
     /// Local file URL backing the current track (a real file or a scratch
     /// download), for on-demand embedded-artwork extraction.
@@ -126,6 +127,7 @@ public final class PlayerEngine {
         loadTask?.cancel()
         artworkTask?.cancel()
         coverTask?.cancel()
+        backfillTask?.cancel()
         scanTask?.cancel()
         audio.stop()
     }
@@ -457,6 +459,7 @@ public final class PlayerEngine {
     public func stop() {
         loadTask?.cancel()
         artworkTask?.cancel()
+        backfillTask?.cancel()
         audio.stop()
         isPlaying = false
         isLoading = false
@@ -645,6 +648,57 @@ public final class PlayerEngine {
         }
     }
 
+    /// Reads tags and embedded art off the just-started track's local file and,
+    /// for a track whose row is still a scan placeholder, writes the real
+    /// artist / album / cover back into the library and the now-playing panel.
+    /// The C backend probed every file over ssh during a scan; this port stages
+    /// fast and fills the gaps the first time a track actually plays.
+    private func backfillNowPlaying(track: Track, index: Int) {
+        guard let url = playingURL else { return }
+        let wantArtist = MetadataPlaceholder.isUnset(track.artist, matching: MetadataPlaceholder.artist)
+        let wantAlbum = MetadataPlaceholder.isUnset(track.album, matching: MetadataPlaceholder.album)
+        let wantCover = track.cover == nil
+        guard wantArtist || wantAlbum || wantCover else { return }
+
+        let keys = Set(track.sources.map(\.dedupKey))
+        guard !keys.isEmpty else { return }
+        let trackID = track.id
+        let reader = metadata
+
+        backfillTask?.cancel()
+        backfillTask = Task { [weak self] in
+            let tags = await reader.read(url)
+            guard let self, !Task.isCancelled, self.playingURL == url else { return }
+
+            let newArtist = wantArtist && hasRealText(tags.artist) ? tags.artist : nil
+            let newAlbum = wantAlbum && hasRealText(tags.album) ? tags.album : nil
+            var newCover: String?
+            if wantCover, let art = tags.artwork, ImageKind.sniff(art) != nil {
+                newCover = try? self.coverStore.store(art).path
+            }
+            guard newArtist != nil || newAlbum != nil || newCover != nil else { return }
+
+            let wrote: (artist: Bool, album: Bool, cover: Bool)
+            do {
+                wrote = try self.library.backfillMetadata(forSourceKeys: keys,
+                                                          artist: newArtist, album: newAlbum,
+                                                          cover: newCover)
+            } catch {
+                if let newCover { self.coverStore.removeIfOwned(newCover) }
+                return
+            }
+            if let newCover, !wrote.cover { self.coverStore.removeIfOwned(newCover) }
+            guard wrote.artist || wrote.album || wrote.cover else { return }
+
+            self.reloadViewed()
+            guard self.selectedIndex == index, index < self.playingTracks.count,
+                  self.playingTracks[index].id == trackID else { return }
+            if wrote.artist, let newArtist { self.artist = newArtist }
+            if wrote.album, let newAlbum { self.album = newAlbum }
+            if wrote.cover, let newCover, self.coverPath == nil { self.coverPath = newCover }
+        }
+    }
+
     // MARK: Track loading
 
     private func start(index: Int, resumeAt: Int = 0, startPaused: Bool = false) {
@@ -678,6 +732,7 @@ public final class PlayerEngine {
         album = track.album.isEmpty ? "No Album" : track.album
         coverPath = resolvedCoverPath(for: track)
         refreshNowPlayingArtwork(userCover: coverPath)
+        backfillNowPlaying(track: track, index: index)
         durationMs = audio.durationMs
         backoff.recordSuccess()
 

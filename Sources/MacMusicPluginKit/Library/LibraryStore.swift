@@ -221,6 +221,53 @@ public final class LibraryStore {
         try rebuildStar()
     }
 
+    /// Fills a track's `artist` / `album` / `cover` in every non-staging
+    /// playlist that holds one of the given sources, but only where the field
+    /// is still unset — blank, or the "Unknown …" placeholder a scan writes.
+    /// A real value (tags imported at add time, or a user's edit) is never
+    /// overwritten. `*` is rebuilt so the change surfaces there too.
+    ///
+    /// Remote sources are staged by file name only — a scan does not probe
+    /// every file — so this is how the engine backfills real tags the first
+    /// time such a track plays and its bytes are on disk. Matching is by
+    /// `Source.dedupKey`, like `applyCover`, so one play updates the track
+    /// wherever it appears.
+    ///
+    /// - Returns: which of the three fields were written somewhere.
+    @discardableResult
+    public func backfillMetadata(forSourceKeys keys: Set<String>,
+                                 artist: String?, album: String?, cover: String?)
+        throws -> (artist: Bool, album: Bool, cover: Bool) {
+        guard !keys.isEmpty, artist != nil || album != nil || cover != nil else {
+            return (false, false, false)
+        }
+        var wroteArtist = false, wroteAlbum = false, wroteCover = false
+
+        for stem in scanStems() where stem != PlaylistName.star {
+            if PlaylistName.incomingTarget(of: stem) != nil { continue }
+            guard var playlist = try? load(stem) else { continue }
+            var touched = false
+            for idx in playlist.tracks.indices
+            where playlist.tracks[idx].sources.contains(where: { keys.contains($0.dedupKey) }) {
+                if let artist,
+                   MetadataPlaceholder.isUnset(playlist.tracks[idx].artist, matching: MetadataPlaceholder.artist) {
+                    playlist.tracks[idx].artist = artist; wroteArtist = true; touched = true
+                }
+                if let album,
+                   MetadataPlaceholder.isUnset(playlist.tracks[idx].album, matching: MetadataPlaceholder.album) {
+                    playlist.tracks[idx].album = album; wroteAlbum = true; touched = true
+                }
+                if let cover, playlist.tracks[idx].cover == nil {
+                    playlist.tracks[idx].cover = cover; wroteCover = true; touched = true
+                }
+            }
+            if touched { try save(playlist) }
+        }
+
+        if wroteArtist || wroteAlbum || wroteCover { try rebuildStar() }
+        return (wroteArtist, wroteAlbum, wroteCover)
+    }
+
     // MARK: Resolve
 
     /// Best fuzzy metadata match in `name`, or nil. Mirrors

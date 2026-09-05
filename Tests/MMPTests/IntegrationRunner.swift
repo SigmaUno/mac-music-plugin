@@ -38,6 +38,30 @@ enum IntegrationRunner {
         }
         check(engine.viewedTracks.count == files.count, "added \(files.count) tracks to home")
 
+        // Backfill: a row staged by file name (no probe) should pick up real
+        // tags + embedded art the first time it actually plays.
+        let probeTags = await AVMetadataReader().read(URL(fileURLWithPath: files[0]))
+        _ = try? library.addSource(Source(kind: .local, path: files[0]),
+                                   metadata: TrackMetadata(title: "staged by name",
+                                                           artist: "Unknown artist", album: "Unknown album"),
+                                   toPlaylist: "probe")
+        engine.refreshPlaylists()
+        engine.viewPlaylist("probe", adoptAsPlaying: true)
+        engine.playFromViewed(0)
+        await settle(1.5)
+        if hasRealText(probeTags.artist) {
+            check(engine.artist == probeTags.artist, "backfilled artist from tags (got \(engine.artist))")
+            check((try? library.load("probe").tracks[0].artist) == probeTags.artist,
+                  "the library row was rewritten, not just the panel")
+        } else {
+            print("       (\(files[0]) has no artist tag — backfill assertion skipped)")
+        }
+        if probeTags.artwork != nil {
+            check(engine.coverPath != nil, "backfilled a cover from embedded art")
+        }
+        engine.stop()
+        engine.viewPlaylist("home", adoptAsPlaying: true)
+
         // Play the first track.
         engine.playFromViewed(0)
         await settle(1.5)

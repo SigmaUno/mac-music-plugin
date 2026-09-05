@@ -42,6 +42,23 @@ func hasRealText(_ s: String?) -> Bool {
     return s.contains { !$0.isWhitespace }
 }
 
+/// The artist / album placeholders a directory scan writes when it stages a
+/// track by file name without probing its tags (`DirectoryScanner.track`,
+/// `ExtractedMetadata.trackMetadata`).
+public enum MetadataPlaceholder {
+    public static let artist = "Unknown artist"
+    public static let album = "Unknown album"
+
+    /// True when `value` is still one of those placeholders (or blank), so tags
+    /// read later — at play time — may fill it in. A real value, including a
+    /// user's edit, is never treated as backfillable.
+    public static func isUnset(_ value: String, matching placeholder: String) -> Bool {
+        !hasRealText(value)
+            || value.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(placeholder) == .orderedSame
+    }
+}
+
 /// Reads `ExtractedMetadata` from a file URL. A protocol so the engine's import
 /// path can be tested without real tagged media.
 public protocol MetadataReading: Sendable {
