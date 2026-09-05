@@ -44,24 +44,27 @@ struct TrackListView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
-            }
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(rows, id: \.track.id) { row in
-                        if editingID == row.track.id {
-                            TrackEditor(track: row.track) { title, artist, album in
-                                engine.editTrack(id: row.track.id, title: title, artist: artist, album: album)
-                                editingID = nil
-                            } onCancel: { editingID = nil }
-                        } else {
-                            TrackRow(engine: engine, index: row.index, track: row.track,
-                                     isIncoming: isIncoming) { editingID = row.track.id }
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(rows, id: \.track.id) { row in
+                            if editingID == row.track.id {
+                                TrackEditor(track: row.track) { title, artist, album in
+                                    engine.editTrack(id: row.track.id, title: title, artist: artist, album: album)
+                                    editingID = nil
+                                } onCancel: { editingID = nil }
+                            } else {
+                                TrackRow(engine: engine, index: row.index, track: row.track,
+                                         isIncoming: isIncoming) { editingID = row.track.id }
+                            }
                         }
                     }
                 }
+                // A ScrollView has no content-based ideal height, so inside the
+                // size-to-fit MenuBarExtra window it collapses to nothing unless
+                // pinned. Give it a definite height (short lists hug their rows).
+                .frame(height: min(CGFloat(rows.count) * 32 + 6, 300))
             }
-            .frame(maxHeight: 240)
         }
     }
 }
