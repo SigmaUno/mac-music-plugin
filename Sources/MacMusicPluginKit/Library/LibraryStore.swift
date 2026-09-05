@@ -187,6 +187,40 @@ public final class LibraryStore {
         try save(playlist)
     }
 
+    /// Sets (or, with `coverPath == nil`, clears) a track's cover image.
+    ///
+    /// On a normal playlist this is one `updateTrack` write. `*` is different:
+    /// `rebuildStar` regenerates it from the other playlists, so a cover written
+    /// only there is lost on the next rebuild. When `name` is `*`, the cover is
+    /// pushed instead to every non-staging playlist that holds one of this
+    /// track's sources, and `*` is rebuilt so the change surfaces there too.
+    /// Mirrors `apply_cover_to_origins` (backend/app.c:3528).
+    public func applyCover(toTrackID id: String, in name: String, coverPath: String?) throws {
+        guard name == PlaylistName.star else {
+            try updateTrack(id: id, in: name, cover: .some(coverPath))
+            return
+        }
+
+        let star = try load(PlaylistName.star)
+        guard let track = star.tracks.first(where: { $0.id == id }) else {
+            throw LibraryError.trackNotFound(id)
+        }
+        let keys = Set(track.sources.map(\.dedupKey))
+
+        for stem in scanStems() where stem != PlaylistName.star {
+            if PlaylistName.incomingTarget(of: stem) != nil { continue }
+            guard var playlist = try? load(stem) else { continue }
+            var touched = false
+            for idx in playlist.tracks.indices
+            where playlist.tracks[idx].sources.contains(where: { keys.contains($0.dedupKey) }) {
+                playlist.tracks[idx].cover = coverPath
+                touched = true
+            }
+            if touched { try save(playlist) }
+        }
+        try rebuildStar()
+    }
+
     // MARK: Resolve
 
     /// Best fuzzy metadata match in `name`, or nil. Mirrors

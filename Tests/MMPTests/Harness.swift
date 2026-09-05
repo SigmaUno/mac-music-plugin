@@ -7,11 +7,17 @@ import Foundation
 enum Harness {
     struct Failure: Error { let message: String }
 
-    private(set) static var cases: [(name: String, body: () throws -> Void)] = []
+    private(set) static var cases: [(name: String, body: () async throws -> Void)] = []
     nonisolated(unsafe) static var currentFailures: [String] = []
 
     static func test(_ name: String, _ body: @escaping () throws -> Void) {
-        cases.append((name, body))
+        cases.append((name, { try body() }))
+    }
+
+    /// An async case. Bodies that touch `@MainActor` types (e.g. `PlayerEngine`)
+    /// declare themselves `@MainActor`; `run()` awaits the hop.
+    static func testAsync(_ name: String, _ body: @escaping @MainActor @Sendable () async throws -> Void) {
+        cases.append((name, { try await body() }))
     }
 
     static func expect(_ condition: @autoclosure () -> Bool, _ message: String,
@@ -29,13 +35,13 @@ enum Harness {
         }
     }
 
-    static func run() -> Never {
+    static func run() async -> Never {
         var passed = 0
         var failed = 0
         for c in cases {
             currentFailures = []
             do {
-                try c.body()
+                try await c.body()
             } catch {
                 currentFailures.append("threw: \(error)")
             }

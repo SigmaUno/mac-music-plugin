@@ -33,9 +33,8 @@ enum IntegrationRunner {
         let engine = PlayerEngine(library: library, defaults: defaults)
         engine.start()
 
-        for (i, path) in files.enumerated() {
-            try? engine.addLocalFile(path: path,
-                                     metadata: TrackMetadata(title: "Track \(i + 1)", artist: "T", album: "Rec"))
+        for path in files {
+            try? await engine.addLocalFile(path: path)
         }
         check(engine.viewedTracks.count == files.count, "added \(files.count) tracks to home")
 
@@ -45,6 +44,7 @@ enum IntegrationRunner {
         check(engine.isPlaying, "playing after playFromViewed(0)")
         check(engine.durationMs > 3000, "duration read (\(engine.durationMs)ms)")
         check(engine.selectedIndex == 0, "selectedIndex == 0")
+        print("       now-playing cover: \(engine.coverPath.map { "embedded art -> \($0)" } ?? "none")")
         let p1 = engine.positionMs
         await settle(1.5)
         check(engine.positionMs > p1 + 500, "position advancing (\(p1) -> \(engine.positionMs))")
@@ -143,6 +143,58 @@ enum IntegrationRunner {
         }
 
         print("\n\(failures == 0 ? "remote integration OK" : "\(failures) remote failure(s)")")
+        return failures == 0 ? 0 : 1
+    }
+
+    /// Plays `audioFile`, reports any embedded artwork, then runs a real iTunes
+    /// cover search + apply against the live service. Local only — needs network.
+    @MainActor
+    static func runCover(audioFile: String) async -> Int {
+        var failures = 0
+        func check(_ cond: Bool, _ msg: String) {
+            print(cond ? "  ok   \(msg)" : "  FAIL \(msg)")
+            if !cond { failures += 1 }
+        }
+
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("mmp-cover-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let library = LibraryStore(directory: root.appendingPathComponent("library"))
+        try? library.bootstrap()
+        let defaults = UserDefaults(suiteName: "mmp-cover-int-\(UUID().uuidString)")!
+        let engine = PlayerEngine(library: library, defaults: defaults)
+        engine.start()
+
+        do { try await engine.addLocalFile(path: audioFile) } catch { check(false, "add: \(error)"); return 1 }
+        let imported = engine.viewedTracks.last
+        print("       imported tags: \(imported?.title ?? "?") / \(imported?.artist ?? "?") / \(imported?.album ?? "?")")
+
+        engine.playFromViewed(engine.viewedTracks.count - 1)
+        await settle(2)
+        check(engine.selectedIndex >= 0, "playing the imported track")
+        print("       embedded artwork: \(engine.coverPath ?? "none")")
+
+        engine.searchCoverArt(query: "daft punk get lucky")
+        for _ in 0..<40 where engine.isCoverBusy { await settle(0.25) }
+        check(!engine.coverResults.isEmpty, "iTunes returned candidates (\(engine.coverResults.count))")
+        print("       \(engine.coverStatus)")
+
+        guard let first = engine.coverResults.first else {
+            print("\n\(failures) cover failure(s)"); return failures == 0 ? 1 : failures
+        }
+        check(first.artworkURL.contains("600x600"), "artwork URL upscaled: \(first.artworkURL)")
+
+        engine.applyCoverArt(first)
+        for _ in 0..<40 where engine.isCoverBusy { await settle(0.25) }
+        let cover = engine.viewedTracks.last?.cover
+        check(cover != nil, "cover written to the library")
+        check(cover.map { fm.fileExists(atPath: $0) } == true, "cover file on disk")
+        check(cover.map { ImageKind.sniff((try? Data(contentsOf: URL(fileURLWithPath: $0))) ?? Data()) != nil } == true,
+              "stored file is a real image")
+        print("       \(engine.coverStatus)")
+
+        engine.shutdown()
+        print("\n\(failures == 0 ? "cover integration OK" : "\(failures) cover failure(s)")")
         return failures == 0 ? 0 : 1
     }
 }

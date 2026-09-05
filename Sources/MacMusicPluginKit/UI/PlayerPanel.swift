@@ -22,6 +22,7 @@ public struct PlayerPanel: View {
             Divider()
             libraryRow
             trackList
+            if engine.selectedIndex >= 0 { coverRow }
             if !engine.statusText.isEmpty {
                 Text(engine.statusText)
                     .font(.caption)
@@ -153,6 +154,50 @@ public struct PlayerPanel: View {
         }
     }
 
+    private var coverRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Button("Find cover art") { engine.searchCoverArt() }
+                    .disabled(engine.isCoverBusy)
+                Button("Choose file…", action: chooseCoverFile)
+                    .disabled(engine.isCoverBusy)
+                if engine.coverPath != nil {
+                    Button("Remove", action: engine.removeCoverArt)
+                        .disabled(engine.isCoverBusy)
+                }
+                Spacer(minLength: 0)
+                if engine.isCoverBusy { ProgressView().controlSize(.small) }
+            }
+            .font(.caption)
+            .buttonStyle(.borderless)
+
+            if !engine.coverResults.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(engine.coverResults) { result in
+                            Button { engine.applyCoverArt(result) } label: {
+                                AsyncImage(url: URL(string: result.artworkURL)) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    Rectangle().fill(.quaternary)
+                                }
+                                .frame(width: 56, height: 56)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .help("\(result.title) — \(result.artist)")
+                        }
+                    }
+                }
+                .frame(height: 60)
+            }
+
+            if !engine.coverStatus.isEmpty {
+                Text(engine.coverStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+    }
+
     private var trackList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
@@ -201,12 +246,20 @@ public struct PlayerPanel: View {
         panel.allowedContentTypes = [.audio]
         panel.title = "Add music files"
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            let name = url.deletingPathExtension().lastPathComponent
-            let meta = TrackMetadata(title: name, artist: "Unknown artist", album: "Unknown album")
-            try? engine.addLocalFile(path: url.path, metadata: meta)
+        let paths = panel.urls.map(\.path)
+        Task {
+            for path in paths { try? await engine.addLocalFile(path: path) }
+            engine.refreshPlaylists()
         }
-        engine.refreshPlaylists()
+    }
+
+    private func chooseCoverFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.jpeg, .png]
+        panel.title = "Choose a cover image"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        engine.applyCoverArt(fromFile: url.path)
     }
 
     private static func time(_ ms: Int) -> String {

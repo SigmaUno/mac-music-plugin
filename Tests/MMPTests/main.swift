@@ -26,6 +26,15 @@ if let i = CommandLine.arguments.firstIndex(of: "--remote"),
     exit(Int32(code))
 }
 
+// `swift run MMPTests --cover <audio-file>` imports the file's tags, plays it,
+// reports any embedded artwork, then hits the live iTunes Search API to fetch
+// and apply a cover. Local only — needs network and an audio device.
+if let i = CommandLine.arguments.firstIndex(of: "--cover"),
+   i + 1 < CommandLine.arguments.count {
+    let code = await IntegrationRunner.runCover(audioFile: CommandLine.arguments[i + 1])
+    exit(Int32(code))
+}
+
 ScaffoldTests.register()
 ModelCodingTests.register()
 PlaylistNameTests.register()
@@ -33,5 +42,6 @@ ResumeTests.register()
 LibraryStoreTests.register()
 PlayerLogicTests.register()
 RemoteLoaderTests.register()
+MetadataCoverTests.register()
 
-Harness.run()
+await Harness.run()

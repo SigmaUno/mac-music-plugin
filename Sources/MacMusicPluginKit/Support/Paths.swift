@@ -36,16 +36,21 @@ public enum Paths {
     /// Per-run scratch directory for streamed downloads. Removed on quit.
     public static let scratch: URL = caches.appendingPathComponent("scratch", isDirectory: true)
 
+    /// Album art pulled out of the currently playing file's tags. Display-only
+    /// and overwritten every track — a user-chosen cover (which lives in
+    /// `covers/`) always wins. Mirrors the C backend's single `cover.jpg`.
+    public static let nowPlayingArtwork: URL = caches.appendingPathComponent("now-playing-artwork", isDirectory: true)
+
     /// Creates every directory the app writes into. Safe to call repeatedly.
     public static func bootstrap() {
-        for dir in [support, library, covers, sshControl, caches, scratch] {
+        for dir in [support, library, covers, sshControl, caches, scratch, nowPlayingArtwork] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }
 
     /// Wipes volatile directories. Call on launch and on quit.
     public static func clearVolatile() {
-        for dir in [sshControl, scratch] {
+        for dir in [sshControl, scratch, nowPlayingArtwork] {
             try? FileManager.default.removeItem(at: dir)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }

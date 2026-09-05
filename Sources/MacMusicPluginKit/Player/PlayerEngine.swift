@@ -7,8 +7,9 @@ import Observation
 /// "next", "seek") into playback. A single in-process object — there is no
 /// `status.json` / `control` IPC as in the Omarchy split.
 ///
-/// Milestone 3 covers local files. Remote loaders and next-track prefetch arrive
-/// in milestone 4; metadata/cover import in milestone 5.
+/// Milestone 3 covers local files; milestone 4 the remote loaders; milestone 5
+/// tag import on add and cover art (embedded art at play time, an iTunes cover
+/// chooser for the rest).
 @MainActor
 @Observable
 public final class PlayerEngine {
@@ -45,6 +46,12 @@ public final class PlayerEngine {
     public private(set) var queue = PlayQueue()
     public var queueIndices: [Int] { queue.indices }
 
+    // MARK: Cover chooser
+    /// Candidate artwork from the last `searchCoverArt`, for the panel to show.
+    public private(set) var coverResults: [CoverResult] = []
+    public private(set) var coverStatus = ""
+    public private(set) var isCoverBusy = false
+
     // MARK: Collaborators
     private let library: LibraryStore
     private let loader: FallbackTrackLoader
@@ -52,11 +59,19 @@ public final class PlayerEngine {
     private let defaults: UserDefaults
     private let audio = AudioPlayer()
     private let randomizer: IndexRandomizer
+    private let metadata: MetadataReading
+    private let covers: CoverService
+    private let coverStore: CoverStore
 
     private var backoff = AutoplayBackoff()
     private var loadTask: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
+    private var artworkTask: Task<Void, Never>?
+    private var coverTask: Task<Void, Never>?
     private var lastResumeWrite = Date.distantPast
+    /// Local file URL backing the current track (a real file or a scratch
+    /// download), for on-demand embedded-artwork extraction.
+    private var playingURL: URL?
     /// True while a load was started by autoplay/track-end rather than the user.
     private var advancing = false
 
@@ -64,12 +79,18 @@ public final class PlayerEngine {
                 loader: FallbackTrackLoader = .standard(),
                 resume: ResumeStore = ResumeStore(),
                 defaults: UserDefaults = .standard,
-                randomizer: IndexRandomizer = SystemRandomizer()) {
+                randomizer: IndexRandomizer = SystemRandomizer(),
+                metadata: MetadataReading = AVMetadataReader(),
+                covers: CoverService = SystemCoverService(),
+                coverStore: CoverStore = CoverStore()) {
         self.library = library
         self.loader = loader
         self.resume = resume
         self.defaults = defaults
         self.randomizer = randomizer
+        self.metadata = metadata
+        self.covers = covers
+        self.coverStore = coverStore
         loadModes()
         audio.onTrackEnded = { [weak self] in self?.handleTrackEnded() }
     }
@@ -103,6 +124,8 @@ public final class PlayerEngine {
         writeResume(force: true)
         ticker?.cancel()
         loadTask?.cancel()
+        artworkTask?.cancel()
+        coverTask?.cancel()
         audio.stop()
     }
 
@@ -151,11 +174,20 @@ public final class PlayerEngine {
         }
     }
 
-    /// Adds a local file to the viewed playlist and refreshes the list.
-    /// A stand-in until the metadata importer (milestone 5) fills in real tags.
-    public func addLocalFile(path: String, metadata: TrackMetadata) throws {
-        try library.addSource(Source(kind: .local, path: path), metadata: metadata,
+    /// Adds a local file to the viewed playlist, importing its title/artist/album
+    /// tags (falling back to the file name, then "Unknown …", exactly as the C
+    /// `build_song_query_for`). Refreshes the list on return.
+    public func addLocalFile(path: String) async throws {
+        let expanded = (path as NSString).expandingTildeInPath
+        let fallbackTitle = (expanded as NSString).lastPathComponent
+        let stem = (fallbackTitle as NSString).deletingPathExtension
+        let tags = await metadata.read(URL(fileURLWithPath: expanded))
+        try library.addSource(Source(kind: .local, path: path),
+                              metadata: tags.trackMetadata(fallbackTitle: stem.isEmpty ? fallbackTitle : stem),
                               toPlaylist: viewedPlaylist)
+        if tags.isEmpty {
+            statusText = "Added \(stem) — no tags, imported by file name."
+        }
         reloadViewed()
     }
 
@@ -224,11 +256,13 @@ public final class PlayerEngine {
 
     public func stop() {
         loadTask?.cancel()
+        artworkTask?.cancel()
         audio.stop()
         isPlaying = false
         isLoading = false
         selectedIndex = -1
         title = ""; artist = ""; album = ""; coverPath = nil
+        playingURL = nil
         positionMs = 0; durationMs = 0
         advancing = false
         resume.write(nil)
@@ -289,6 +323,128 @@ public final class PlayerEngine {
     public func dequeue(_ index: Int) { queue.remove(index: index) }
     public func clearQueue() { queue.clear(); statusText = "Play queue cleared." }
 
+    // MARK: Cover art
+
+    /// Looks up candidate artwork for the playing track. An empty/absent query
+    /// falls back to "<artist> <title>". Mirrors `handle_cover_search`.
+    public func searchCoverArt(query: String? = nil) {
+        guard selectedIndex >= 0 else { coverStatus = "Nothing is playing."; return }
+        let term = (query?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? "\(artist) \(title)".trimmingCharacters(in: .whitespaces)
+        guard !term.isEmpty else { coverStatus = "Nothing to search for."; return }
+
+        coverTask?.cancel()
+        isCoverBusy = true
+        coverStatus = "Searching for cover art…"
+        coverResults = []
+        coverTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let hits = try await covers.search(term: term)
+                if Task.isCancelled { return }
+                coverResults = hits
+                coverStatus = hits.isEmpty ? "No cover art found for that search." :
+                    "\(hits.count) cover\(hits.count == 1 ? "" : "s") found."
+            } catch {
+                if Task.isCancelled { return }
+                coverStatus = "Cover search failed: \(describe(error))"
+            }
+            isCoverBusy = false
+        }
+    }
+
+    /// Downloads `result`'s image, stores it beside the library, and hangs it on
+    /// the track this was started for — not whatever is playing when the
+    /// download lands. Mirrors `handle_cover_apply` / `finish_cover_job`.
+    public func applyCoverArt(_ result: CoverResult) {
+        applyCover(from: { try await self.covers.downloadImage(from: result.artworkURL) })
+    }
+
+    /// Uses a local image file the user picked as the cover for the playing track.
+    public func applyCoverArt(fromFile path: String) {
+        applyCover(from: {
+            let data = try Data(contentsOf: URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
+            guard data.count <= 8 * 1024 * 1024 else { throw CoverError.tooLarge }
+            guard ImageKind.sniff(data) != nil else { throw CoverError.notAnImage }
+            return data
+        })
+    }
+
+    /// Clears the playing track's cover, falling back to embedded art.
+    public func removeCoverArt() {
+        guard selectedIndex >= 0, selectedIndex < playingTracks.count else { return }
+        let trackID = playingTracks[selectedIndex].id
+        let previous = playingTracks[selectedIndex].cover
+        do {
+            try library.applyCover(toTrackID: trackID, in: playingPlaylist, coverPath: nil)
+            coverStore.removeIfOwned(previous)
+            reloadViewed()
+            coverPath = nil
+            refreshNowPlayingArtwork(userCover: nil)
+            coverStatus = "Cover removed."
+        } catch {
+            coverStatus = "Could not remove the cover: \(describe(error))"
+        }
+    }
+
+    private func applyCover(from fetch: @escaping @Sendable () async throws -> Data) {
+        guard selectedIndex >= 0, selectedIndex < playingTracks.count else {
+            coverStatus = "Nothing is playing."
+            return
+        }
+        let playlist = playingPlaylist
+        let trackID = playingTracks[selectedIndex].id
+        let previous = playingTracks[selectedIndex].cover
+
+        coverTask?.cancel()
+        isCoverBusy = true
+        coverStatus = "Fetching cover…"
+        coverTask = Task { [weak self] in
+            guard let self else { return }
+            defer { isCoverBusy = false }
+            do {
+                let data = try await fetch()
+                if Task.isCancelled { return }
+                let stored = try coverStore.store(data)
+                do {
+                    try library.applyCover(toTrackID: trackID, in: playlist, coverPath: stored.path)
+                } catch {
+                    coverStore.removeIfOwned(stored.path)
+                    throw error
+                }
+                if previous != stored.path { coverStore.removeIfOwned(previous) }
+                reloadViewed()
+                if playlist == playingPlaylist, selectedIndex >= 0,
+                   selectedIndex < playingTracks.count, playingTracks[selectedIndex].id == trackID {
+                    coverPath = stored.path
+                }
+                coverResults = []
+                coverStatus = "Cover updated."
+            } catch {
+                if Task.isCancelled { return }
+                coverStatus = "Could not set the cover: \(describe(error))"
+            }
+        }
+    }
+
+    /// Pulls embedded art out of the playing file into a scratch image and shows
+    /// it — unless a user-chosen cover is already in place. Display-only: it is
+    /// never written to the library (mirrors `extract_source_cover`).
+    private func refreshNowPlayingArtwork(userCover: String?) {
+        artworkTask?.cancel()
+        guard userCover == nil, let url = playingURL else { return }
+        let reader = metadata
+        artworkTask = Task { [weak self] in
+            let extracted = await reader.read(url)
+            guard let self, !Task.isCancelled, self.playingURL == url,
+                  let data = extracted.artwork, let kind = ImageKind.sniff(data) else { return }
+            let dest = Paths.nowPlayingArtwork.appendingPathComponent("current.\(kind.fileExtension)")
+            try? FileManager.default.createDirectory(at: Paths.nowPlayingArtwork, withIntermediateDirectories: true)
+            do { try AtomicFile.write(data, to: dest) } catch { return }
+            if self.coverPath == nil { self.coverPath = dest.path }
+        }
+    }
+
     // MARK: Track loading
 
     private func start(index: Int, resumeAt: Int = 0, startPaused: Bool = false) {
@@ -305,6 +461,7 @@ public final class PlayerEngine {
                 if Task.isCancelled { return }
                 try self.audio.load(url: url, playing: !startPaused)
                 ScratchFile.prune(keeping: source.kind == .local ? [] : [source])
+                self.playingURL = url
                 self.onTrackStarted(track: track, index: index, resumeAt: resumeAt, paused: startPaused)
             } catch {
                 if Task.isCancelled || (error as? TrackLoadError) == .cancelled { return }
@@ -320,6 +477,7 @@ public final class PlayerEngine {
         artist = track.artist.isEmpty ? "No Artist" : track.artist
         album = track.album.isEmpty ? "No Album" : track.album
         coverPath = resolvedCoverPath(for: track)
+        refreshNowPlayingArtwork(userCover: coverPath)
         durationMs = audio.durationMs
         backoff.recordSuccess()
 
@@ -444,6 +602,13 @@ public final class PlayerEngine {
             }
         case let e as LibraryError:
             return "\(e)"
+        case let e as CoverError:
+            switch e {
+            case .badQuery: return "invalid request"
+            case .network(let m): return m
+            case .notAnImage: return "that file is not a JPEG or PNG"
+            case .tooLarge: return "that image is too large (8 MB max)"
+            }
         default:
             return error.localizedDescription
         }
