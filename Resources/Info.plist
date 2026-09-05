@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Mac Music Plugin</string>
+	<key>CFBundleDisplayName</key>
+	<string>Mac Music Plugin</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.sigmauno.mac-music-plugin</string>
+	<key>CFBundleExecutable</key>
+	<string>MacMusicPlugin</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Mac Music Plugin opens Terminal to run ssh-add when an SSH music source needs your key unlocked.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Mac Music Plugin connects to hosts on your local network to stream music you have added as local-network sources.</string>
+</dict>
+</plist>
