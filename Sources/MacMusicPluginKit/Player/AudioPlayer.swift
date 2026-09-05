@@ -33,12 +33,20 @@ final class AudioPlayer {
 
     private(set) var isPlaying = false
 
+    private var configObserver: NSObjectProtocol?
+
     init() {
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(configurationChanged),
-            name: .AVAudioEngineConfigurationChange, object: engine)
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.configurationChanged() }
+        }
+    }
+
+    deinit {
+        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
     }
 
     var durationMs: Int { frameToMs(totalFrames) }
@@ -180,17 +188,15 @@ final class AudioPlayer {
         isPlaying = false
     }
 
-    @objc private func configurationChanged() {
-        // The output device changed under us. Rebuild and resume from position.
-        Task { @MainActor in
-            guard self.file != nil else { return }
-            let resumeAt = self.positionMs
-            let wasPlaying = self.isPlaying
-            if !self.engine.isRunning { try? self.engine.start() }
-            self.haltPlayback()
-            self.schedule(fromFrame: max(0, min(self.msToFrame(resumeAt), self.totalFrames)))
-            if wasPlaying { self.player.play() }
-        }
+    /// The output device changed under us. Rebuild and resume from position.
+    private func configurationChanged() {
+        guard file != nil else { return }
+        let resumeAt = positionMs
+        let wasPlaying = isPlaying
+        if !engine.isRunning { try? engine.start() }
+        haltPlayback()
+        schedule(fromFrame: max(0, min(msToFrame(resumeAt), totalFrames)))
+        if wasPlaying { player.play() }
     }
 
     private func frameToMs(_ frame: AVAudioFramePosition) -> Int {

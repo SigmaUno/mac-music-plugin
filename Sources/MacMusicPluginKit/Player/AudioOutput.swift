@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import CoreAudio
 
 /// A selectable output device. Identified to the UI by `name` (what the Omarchy
