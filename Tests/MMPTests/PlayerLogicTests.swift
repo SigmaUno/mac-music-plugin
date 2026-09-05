@@ -88,26 +88,20 @@ enum PlayerLogicTests {
             Harness.expectEqual(d.streak, 0)
         }
 
-        Harness.test("LocalTrackLoader loads existing files, rejects others") {
+        Harness.testAsync("LocalTrackLoader loads existing files, rejects others") {
             let (dir, cleanup) = Harness.tempDir("loader")
             defer { cleanup() }
             let file = dir.appendingPathComponent("song.mp3")
             try Data("x".utf8).write(to: file)
             let loader = LocalTrackLoader()
 
-            let sema = DispatchSemaphore(value: 0)
-            var result: Result<URL, Error>?
-            Task {
-                do { result = .success(try await loader.load(Source(kind: .local, path: file.path))) }
-                catch { result = .failure(error) }
-                sema.signal()
-            }
-            sema.wait()
-            if case .success(let url)? = result {
-                Harness.expectEqual(url.lastPathComponent, "song.mp3")
-            } else {
-                Harness.expect(false, "expected the file to load")
-            }
+            let url = try await loader.load(Source(kind: .local, path: file.path))
+            Harness.expectEqual(url.lastPathComponent, "song.mp3")
+
+            var rejected = false
+            do { _ = try await loader.load(Source(kind: .local, path: "/no/such/file.mp3")) }
+            catch { rejected = true }
+            Harness.expect(rejected, "missing file rejected")
         }
     }
 }
