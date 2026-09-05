@@ -8,6 +8,8 @@ struct StubFetcher: RemoteFetcher {
 
     func run(argv: [String], destination: URL, maxBytes: Int) async throws {
         if let error { throw error }
+        try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
         try Data(stdout.utf8).write(to: destination)
     }
 }
