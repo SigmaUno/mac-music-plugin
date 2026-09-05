@@ -126,6 +126,7 @@ public final class PlayerEngine {
         loadTask?.cancel()
         artworkTask?.cancel()
         coverTask?.cancel()
+        scanTask?.cancel()
         audio.stop()
     }
 
@@ -288,6 +289,95 @@ public final class PlayerEngine {
 
     public func declineIncoming(trackIDs: [String]) {
         applyIncoming(trackIDs) { try self.library.declineIncoming(trackIDs: $0, from: self.viewedPlaylist) }
+    }
+
+    // MARK: Directory scan
+
+    public private(set) var isScanning = false
+    public private(set) var scanCount = 0
+
+    private let scanner = DirectoryScanner()
+    private var scanTask: Task<Void, Never>?
+
+    /// The playlist a scan should stage into: the viewed one, or — if that is
+    /// itself a staging list — its target; `home` when viewing `*` or a staging
+    /// list with an unknown target. Mirrors `scanTargetPlaylist` (BarWidget.qml).
+    private var scanTargetPlaylist: String {
+        if let target = viewedIncomingTarget { return target }
+        if viewedPlaylist != PlaylistName.star,
+           PlaylistName.incomingTarget(of: viewedPlaylist) == nil,
+           PlaylistName.isValid(viewedPlaylist) {
+            return viewedPlaylist
+        }
+        return PlaylistName.home
+    }
+
+    /// Scans `directory` (local, or remote over `ssh` when `kind` is `ssh` /
+    /// `network`) into a `INCOMING >> <target> <<` staging playlist, switches the
+    /// view to it, and lets the user accept or decline each row. Mirrors
+    /// `start_scan` / `handle_scan` (backend/app.c:3382).
+    public func startScan(kind: SourceKind, username: String = "", host: String = "",
+                          directory: String) async {
+        guard !isScanning else { statusText = "A scan is already running."; return }
+        let dir = directory.trimmingCharacters(in: .whitespaces)
+        guard !dir.isEmpty else { statusText = "Scan failed: a directory is required."; return }
+
+        let target = scanTargetPlaylist
+        guard library.playlistExists(target) else {
+            statusText = "Scan failed: no such playlist “\(target)”."; return
+        }
+        if (kind == .ssh || kind == .network),
+           !(RemoteCommand.isValidName(username, allowColon: false)
+             && RemoteCommand.isValidName(host, allowColon: true)) {
+            statusText = "Scan failed: invalid username or host."; return
+        }
+
+        let staging = PlaylistName.incomingName(for: target)
+        do {
+            if !library.playlistExists(staging) {
+                try library.writeStaging(target: target, tracks: [])
+            }
+        } catch {
+            statusText = "Scan failed: could not create the staging playlist."; return
+        }
+        refreshPlaylists()
+        viewPlaylist(staging)
+
+        isScanning = true
+        scanCount = 0
+        statusText = "Scanning \(dir)…"
+
+        scanTask = Task { [weak self] in
+            guard let self else { return }
+            let tracks: [Track]
+            do {
+                if kind == .local {
+                    tracks = self.scanner.scanLocal(directory: dir)
+                } else {
+                    tracks = try await self.scanner.scanRemote(kind: kind, username: username,
+                                                               host: host, directory: dir)
+                }
+            } catch {
+                self.isScanning = false
+                self.statusText = "Scan failed: \(self.describe(error))"
+                return
+            }
+            if Task.isCancelled { self.isScanning = false; return }
+
+            do {
+                try self.library.writeStaging(target: target, tracks: tracks)
+            } catch {
+                self.isScanning = false
+                self.statusText = "Scan failed: could not write results."
+                return
+            }
+            self.scanCount = tracks.count
+            self.isScanning = false
+            if self.viewedPlaylist == staging { self.reloadViewed() } else { self.refreshPlaylists() }
+            self.statusText = tracks.isEmpty
+                ? "Scan found no audio files in that directory."
+                : "Scan done: \(tracks.count) file\(tracks.count == 1 ? "" : "s") staged in “\(staging)”. Accept or decline them."
+        }
     }
 
     private func applyIncoming(_ ids: [String], _ action: ([String]) throws -> Void) {
@@ -715,6 +805,11 @@ public final class PlayerEngine {
             case .network(let m): return m
             case .notAnImage: return "that file is not a JPEG or PNG"
             case .tooLarge: return "that image is too large (8 MB max)"
+            }
+        case let e as DirectoryScanner.ScanError:
+            switch e {
+            case .invalidIdentity: return "invalid username or host"
+            case .transport(let m): return m
             }
         default:
             return error.localizedDescription

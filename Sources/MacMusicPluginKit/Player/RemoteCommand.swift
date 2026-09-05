@@ -38,6 +38,16 @@ public enum RemoteCommand {
         "cat -- " + singleQuoted(path)
     }
 
+    /// Remote command listing audio files directly under `directory` (one level,
+    /// like the C `-maxdepth 1`), newline-separated on stdout. `directory` is
+    /// single-quoted so the remote shell treats it literally. Mirrors
+    /// `remote_find_command` (backend/app.c:879).
+    public static func remoteFind(directory: String) -> String {
+        let names = #"\( -iname '*.mp3' -o -iname '*.flac' -o -iname '*.ogg' -o -iname '*.oga' "#
+            + #"-o -iname '*.opus' -o -iname '*.wav' -o -iname '*.m4a' -o -iname '*.aac' -o -iname '*.wma' \)"#
+        return "find " + singleQuoted(directory) + " -maxdepth 1 -type f " + names + " 2>/dev/null | sort"
+    }
+
     // MARK: Option sets
 
     /// Connection-hardening options applied to every `ssh` spawned, so a dead or
@@ -84,13 +94,28 @@ public enum RemoteCommand {
     /// - Returns: nil when `username`/`ip` fail validation.
     public static func sshCat(username: String, ip: String, remotePath: String,
                               controlDirectory: URL? = Paths.sshControl) -> [String]? {
+        guard !remotePath.isEmpty else { return nil }
+        return ssh(username: username, ip: ip, remoteCommand: remoteCat(path: remotePath),
+                   controlDirectory: controlDirectory)
+    }
+
+    /// `ssh … "find '<dir>' -maxdepth 1 -type f …"` for the directory scanner.
+    /// - Returns: nil when `username`/`ip` fail validation or `directory` is empty.
+    public static func sshFind(username: String, ip: String, directory: String,
+                               controlDirectory: URL? = Paths.sshControl) -> [String]? {
+        guard !directory.isEmpty else { return nil }
+        return ssh(username: username, ip: ip, remoteCommand: remoteFind(directory: directory),
+                   controlDirectory: controlDirectory)
+    }
+
+    private static func ssh(username: String, ip: String, remoteCommand: String,
+                            controlDirectory: URL?) -> [String]? {
         guard isValidName(username, allowColon: false),
-              isValidName(ip, allowColon: true),
-              !remotePath.isEmpty else { return nil }
+              isValidName(ip, allowColon: true) else { return nil }
         var argv = ["ssh", "-F", "/dev/null"]
         argv += hardeningOptions
         argv += controlOptions(controlDirectory: controlDirectory)
-        argv += ["--", "\(username)@\(ip)", remoteCat(path: remotePath)]
+        argv += ["--", "\(username)@\(ip)", remoteCommand]
         return argv
     }
 

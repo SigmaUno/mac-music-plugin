@@ -51,5 +51,6 @@ PlayerLogicTests.register()
 RemoteLoaderTests.register()
 MetadataCoverTests.register()
 EngineLibraryTests.register()
+ScanTests.register()
 
 await Harness.run()
