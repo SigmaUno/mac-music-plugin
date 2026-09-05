@@ -236,7 +236,8 @@ public final class LibraryStore {
     /// - Returns: which of the three fields were written somewhere.
     @discardableResult
     public func backfillMetadata(forSourceKeys keys: Set<String>,
-                                 artist: String?, album: String?, cover: String?)
+                                 artist: String?, album: String?, cover: String?,
+                                 rebuildStarAfter: Bool = true)
         throws -> (artist: Bool, album: Bool, cover: Bool) {
         guard !keys.isEmpty, artist != nil || album != nil || cover != nil else {
             return (false, false, false)
@@ -264,7 +265,7 @@ public final class LibraryStore {
             if touched { try save(playlist) }
         }
 
-        if wroteArtist || wroteAlbum || wroteCover { try rebuildStar() }
+        if rebuildStarAfter, wroteArtist || wroteAlbum || wroteCover { try rebuildStar() }
         return (wroteArtist, wroteAlbum, wroteCover)
     }
 

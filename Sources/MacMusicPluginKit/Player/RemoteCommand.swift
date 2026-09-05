@@ -38,6 +38,15 @@ public enum RemoteCommand {
         "cat -- " + singleQuoted(path)
     }
 
+    /// The remote command that streams at most the first `bytes` of `path`:
+    /// `head -c <bytes> -- '<path>'`. `head` closes the pipe and exits 0 once it
+    /// has written that many bytes, so this is a clean bounded fetch — enough to
+    /// read a file's tag blocks and (usually) its front-cover art without
+    /// pulling the whole track. `path` is single-quoted like `remoteCat`.
+    public static func remoteHead(path: String, bytes: Int) -> String {
+        "head -c \(max(1, bytes)) -- " + singleQuoted(path)
+    }
+
     /// Remote command listing audio files directly under `directory` (one level,
     /// like the C `-maxdepth 1`), newline-separated on stdout. `directory` is
     /// single-quoted so the remote shell treats it literally. Mirrors
@@ -105,6 +114,16 @@ public enum RemoteCommand {
                                controlDirectory: URL? = Paths.sshControl) -> [String]? {
         guard !directory.isEmpty else { return nil }
         return ssh(username: username, ip: ip, remoteCommand: remoteFind(directory: directory),
+                   controlDirectory: controlDirectory)
+    }
+
+    /// `ssh … "head -c <bytes> -- '<path>'"` — fetches only the front of a
+    /// remote file, for reading its tags without downloading the whole track.
+    /// - Returns: nil when `username`/`ip` fail validation or `remotePath` is empty.
+    public static func sshHead(username: String, ip: String, remotePath: String, bytes: Int,
+                               controlDirectory: URL? = Paths.sshControl) -> [String]? {
+        guard !remotePath.isEmpty else { return nil }
+        return ssh(username: username, ip: ip, remoteCommand: remoteHead(path: remotePath, bytes: bytes),
                    controlDirectory: controlDirectory)
     }
 
