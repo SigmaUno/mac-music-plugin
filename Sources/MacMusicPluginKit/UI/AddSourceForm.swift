@@ -5,6 +5,7 @@ import SwiftUI
 /// and the fields that kind needs, plus a "scan directory" mode that stages every
 /// audio file under a folder for review. Mirrors the add-source form in
 /// `BarWidget.qml`.
+@MainActor
 struct AddSourceForm: View {
     let engine: PlayerEngine
     @State private var expanded = false

@@ -4,6 +4,7 @@ import SwiftUI
 /// The viewed tab is filled; a playlist that is *playing* while a different one
 /// is viewed keeps a faint tint; `INCOMING >>` staging lists show in orange.
 /// Mirrors the tab strip in `BarWidget.qml`.
+@MainActor
 struct PlaylistTabStrip: View {
     let engine: PlayerEngine
     @State private var adding = false

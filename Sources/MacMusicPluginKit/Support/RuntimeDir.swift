@@ -52,8 +52,9 @@ public enum RuntimeDir {
     private static func isPrivateDirectory(_ path: String, uid: uid_t) -> Bool {
         var st = stat()
         guard lstat(path, &st) == 0 else { return false }
-        guard (st.st_mode & S_IFMT) == S_IFDIR else { return false }   // not a symlink
+        let mode = UInt32(st.st_mode)
+        guard mode & UInt32(S_IFMT) == UInt32(S_IFDIR) else { return false }   // a dir, not a symlink
         guard st.st_uid == uid else { return false }
-        return (st.st_mode & 0o077) == 0
+        return mode & 0o077 == 0
     }
 }

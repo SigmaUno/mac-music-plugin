@@ -4,6 +4,7 @@ import SwiftUI
 /// edit and remove — or accept/decline when reviewing a `INCOMING >>` staging
 /// list, with bulk actions beside the filter field. Mirrors the library section
 /// of `BarWidget.qml`.
+@MainActor
 struct TrackListView: View {
     let engine: PlayerEngine
     @State private var filter = ""
@@ -65,6 +66,7 @@ struct TrackListView: View {
     }
 }
 
+@MainActor
 private struct TrackRow: View {
     let engine: PlayerEngine
     let index: Int
@@ -129,6 +131,7 @@ private struct TrackRow: View {
     }
 }
 
+@MainActor
 private struct TrackEditor: View {
     let track: Track
     let onSave: (String, String, String) -> Void

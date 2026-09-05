@@ -3,6 +3,7 @@ import SwiftUI
 /// The item drawn in the system menu bar: a transport glyph and, when something
 /// is loaded, a compact "Title · Artist". Mirrors the Omarchy bar widget's
 /// glyph/label logic (BarWidget.qml around line 1030).
+@MainActor
 public struct MenuBarLabel: View {
     private let engine: PlayerEngine
 

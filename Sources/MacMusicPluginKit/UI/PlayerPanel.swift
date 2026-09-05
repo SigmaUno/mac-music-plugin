@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The popover shown from the menu bar item — a full now-playing / transport /
 /// library panel that mirrors the Omarchy plugin's `PopupCard`.
+@MainActor
 public struct PlayerPanel: View {
     private let engine: PlayerEngine
     @State private var showCoverPicker = false
@@ -36,7 +37,7 @@ public struct PlayerPanel: View {
 
             Divider()
             HStack {
-                Toggle("Open at Login", isOn: Binding(get: { openAtLogin }, set: setOpenAtLogin))
+                Toggle("Open at Login", isOn: Binding(get: { openAtLogin }, set: { setOpenAtLogin($0) }))
                     .toggleStyle(.checkbox)
                 Spacer()
                 Button("Unlock SSH agent…", action: engine.unlockSSHAgent)
@@ -131,6 +132,7 @@ public struct PlayerPanel: View {
 
 // MARK: - Now playing
 
+@MainActor
 struct NowPlayingHeader: View {
     let engine: PlayerEngine
     @Binding var showCoverPicker: Bool
@@ -174,6 +176,7 @@ struct NowPlayingHeader: View {
     }
 }
 
+@MainActor
 struct SeekBar: View {
     let engine: PlayerEngine
 
@@ -195,6 +198,7 @@ struct SeekBar: View {
     }
 }
 
+@MainActor
 struct TransportControls: View {
     let engine: PlayerEngine
 
@@ -213,19 +217,21 @@ struct TransportControls: View {
     }
 }
 
+@MainActor
 struct ModeToggles: View {
     let engine: PlayerEngine
 
     var body: some View {
         HStack(spacing: 12) {
-            Toggle("Autoplay", isOn: Binding(get: { engine.autoplay }, set: engine.setAutoplay))
-            Toggle("Shuffle", isOn: Binding(get: { engine.shuffle }, set: engine.setShuffle))
-            Toggle("Repeat one", isOn: Binding(get: { engine.repeatOne }, set: engine.setRepeatOne))
+            Toggle("Autoplay", isOn: Binding(get: { engine.autoplay }, set: { engine.setAutoplay($0) }))
+            Toggle("Shuffle", isOn: Binding(get: { engine.shuffle }, set: { engine.setShuffle($0) }))
+            Toggle("Repeat one", isOn: Binding(get: { engine.repeatOne }, set: { engine.setRepeatOne($0) }))
         }
         .toggleStyle(.checkbox).font(.caption)
     }
 }
 
+@MainActor
 struct VolumeControls: View {
     let engine: PlayerEngine
 
