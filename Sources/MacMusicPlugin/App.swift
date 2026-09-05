@@ -7,20 +7,21 @@ struct MacMusicPluginApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PlayerPanel(library: appDelegate.library)
-                .frame(width: 380)
+            PlayerPanel(engine: appDelegate.engine)
         } label: {
-            MenuBarLabel()
+            MenuBarLabel(engine: appDelegate.engine)
         }
         .menuBarExtraStyle(.window)
     }
 }
 
 /// Owns process-lifetime setup and teardown. `MenuBarExtra` alone gives no hook
-/// for "app is launching" / "app is quitting", which is where the on-disk
-/// directories are created, the library is seeded, and volatile state is swept.
+/// for "app is launching" / "app is quitting", which is where directories are
+/// created, the library is seeded, and the engine is started and stopped.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let library = LibraryStore()
+    lazy var engine = PlayerEngine(library: library)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Paths.bootstrap()
@@ -31,9 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSLog("MacMusicPlugin: library bootstrap failed: \(error)")
         }
+        engine.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        engine.shutdown()
         Paths.clearVolatile()
     }
 }

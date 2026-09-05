@@ -45,9 +45,10 @@ existing library, copy that plugin's `library/` directory contents into this fol
 
 ## Milestones
 
-1. **Scaffold** — menu bar app shell, paths, bundling. ← current
-2. Library store (JSON playlists, add/edit/remove).
-3. Local‑file playback engine.
+1. ~~Scaffold — menu bar app shell, paths, bundling.~~
+2. ~~Library store (JSON playlists, add/edit/remove).~~
+3. ~~Local‑file playback engine (AVAudioEngine: transport, seek, volume, output
+   device, autoplay/shuffle/repeat, queue, resume).~~ ← current
 4. Remote sources (HTTPS, SSH, local network).
 5. Metadata + cover art.
 6. Full player panel UI.
