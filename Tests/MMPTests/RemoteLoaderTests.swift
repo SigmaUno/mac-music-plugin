@@ -31,6 +31,14 @@ final class FakeRemoteFetcher: RemoteFetcher, @unchecked Sendable {
     }
 }
 
+/// A `MetadataReading` that ignores the file and always reports the same tags,
+/// so a prober test can assert the fetch happened without a real tagged file.
+struct EchoReader: MetadataReading {
+    func read(_ url: URL) async -> ExtractedMetadata {
+        ExtractedMetadata(title: "Echoed Title", artist: "Echoed Artist", album: "Echoed Album")
+    }
+}
+
 /// Runs an async throwing body to completion on a background task, blocking the
 /// caller — the harness is synchronous.
 private func await_<T>(_ body: @escaping @Sendable () async throws -> T) -> Result<T, Error> {
@@ -90,6 +98,39 @@ enum RemoteLoaderTests {
             let argv = RemoteCommand.sshCat(username: "u", ip: "1.2.3.4", remotePath: "/x",
                                             controlDirectory: nil)!
             Harness.expect(!argv.contains("ControlMaster=auto"), "no multiplexing without a dir")
+        }
+
+        Harness.test("sshHead argv: bounded prefix fetch via head -c") {
+            Harness.expectEqual(RemoteCommand.remoteHead(path: "/m/a.flac", bytes: 2048),
+                                "head -c 2048 -- '/m/a.flac'")
+            Harness.expectEqual(RemoteCommand.remoteHead(path: "a'b.flac", bytes: 10),
+                                "head -c 10 -- 'a'\\''b.flac'", "path still single-quoted")
+            let argv = RemoteCommand.sshHead(username: "kevin", ip: "10.0.0.5",
+                                             remotePath: "/m/a.flac", bytes: 4096,
+                                             controlDirectory: nil)!
+            Harness.expectEqual(argv.first, "ssh")
+            Harness.expectEqual(argv.last, "head -c 4096 -- '/m/a.flac'")
+            Harness.expect(RemoteCommand.sshHead(username: "a b", ip: "h", remotePath: "/x", bytes: 1) == nil,
+                           "bad identity rejected")
+        }
+
+        Harness.test("SystemMetadataProber: heads the file, reads tags; local source is skipped") {
+            let (dir, cleanup) = Harness.tempDir("probe")
+            defer { cleanup() }
+            let fetcher = FakeRemoteFetcher(writesData: true)
+            let prober = SystemMetadataProber(fetcher: fetcher, reader: EchoReader(),
+                                              controlDirectory: nil, scratchRoot: dir, prefixBytes: 1234)
+
+            let ssh = Source(kind: .ssh, path: "/m/a.flac", username: "u", ip: "1.2.3.4")
+            let got = await_ { await prober.probe(ssh) }
+            guard case .success(let meta) = got else { Harness.expect(false, "probe ran"); return }
+            Harness.expectEqual(meta.artist, "Echoed Artist")
+            Harness.expectEqual(fetcher.calls.count, 1)
+            Harness.expect(fetcher.calls[0].argv.last == "head -c 1234 -- '/m/a.flac'", "bounded head fetch")
+
+            let local = await_ { await prober.probe(Source(kind: .local, path: "/x.flac")) }
+            if case .success(let m) = local { Harness.expect(m.isEmpty, "local source not probed") }
+            Harness.expectEqual(fetcher.calls.count, 1, "no extra fetch for the local source")
         }
 
         Harness.test("curl argv: https-only, fail-fast, url last after --") {

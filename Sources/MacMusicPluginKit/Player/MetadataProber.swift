@@ -47,10 +47,8 @@ public struct SystemMetadataProber: MetadataProbing {
 
         // A full download from a previous play is the best source of truth.
         let full = ScratchFile.url(for: source, root: scratchRoot)
-        if (try? full.checkResourceIsReachable()) == true,
-           (try? FileManager.default.attributesOfItem(atPath: full.path)[.size] as? Int ?? 0) ?? 0 > 0 {
-            return await reader.read(full)
-        }
+        let fullSize = (try? FileManager.default.attributesOfItem(atPath: full.path))?[.size] as? Int ?? 0
+        if fullSize > 0 { return await reader.read(full) }
 
         // A throwaway prefix, kept out of the scratch dir so track-change
         // pruning never races it.
