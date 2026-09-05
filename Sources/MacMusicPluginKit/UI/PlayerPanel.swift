@@ -32,6 +32,7 @@ public struct PlayerPanel: View {
             Divider()
             HStack {
                 Button("Add local file…", action: addLocalFile)
+                Button("Unlock SSH agent…", action: engine.unlockSSHAgent)
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut("q")
             }

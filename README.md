@@ -48,8 +48,10 @@ existing library, copy that plugin's `library/` directory contents into this fol
 1. ~~Scaffold — menu bar app shell, paths, bundling.~~
 2. ~~Library store (JSON playlists, add/edit/remove).~~
 3. ~~Local‑file playback engine (AVAudioEngine: transport, seek, volume, output
-   device, autoplay/shuffle/repeat, queue, resume).~~ ← current
-4. Remote sources (HTTPS, SSH, local network).
+   device, autoplay/shuffle/repeat, queue, resume).~~
+4. ~~Remote sources — HTTPS (`curl`), SSH and local network (`cat` over `ssh`,
+   connection‑hardened and multiplexed); each streamed to a scratch file, tried
+   in turn on failure; "Unlock SSH agent" for passphrase‑protected keys.~~ ← current
 5. Metadata + cover art.
 6. Full player panel UI.
 7. Directory scanning.

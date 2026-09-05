@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 @testable import MacMusicPluginKit
 
@@ -96,5 +97,52 @@ enum IntegrationRunner {
 
     private static func settle(_ seconds: Double) async {
         try? await Task.sleep(for: .milliseconds(Int(seconds * 1000)))
+    }
+
+    /// Fetches one HTTPS source (and, if `sshTarget` is `user@host:/path`, one
+    /// SSH source) through the real `curl` / `ssh` subprocesses, then confirms
+    /// AVFoundation can open the scratch file.
+    @MainActor
+    static func runRemote(httpsURL: String, sshTarget: String?) async -> Int {
+        var failures = 0
+        func check(_ cond: Bool, _ msg: String) {
+            print(cond ? "  ok   \(msg)" : "  FAIL \(msg)")
+            if !cond { failures += 1 }
+        }
+
+        let fm = FileManager.default
+        let scratch = fm.temporaryDirectory.appendingPathComponent("mmp-remote-\(UUID().uuidString)")
+        try? fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: scratch) }
+
+        var sources: [(String, Source)] = [
+            ("https", Source(kind: .https, url: httpsURL)),
+        ]
+        if let sshTarget, let at = sshTarget.firstIndex(of: "@"), let colon = sshTarget.firstIndex(of: ":") {
+            let user = String(sshTarget[sshTarget.startIndex..<at])
+            let host = String(sshTarget[sshTarget.index(after: at)..<colon])
+            let path = String(sshTarget[sshTarget.index(after: colon)...])
+            sources.append(("ssh", Source(kind: .ssh, path: path, username: user, ip: host)))
+        }
+
+        let loader = FallbackTrackLoader.standard()
+        for (label, source) in sources {
+            let track = Track(title: label, artist: "T", album: "Remote", sources: [source])
+            do {
+                let started = Date()
+                let (url, used) = try await loader.loadTrack(track)
+                let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
+                check(used.kind == source.kind, "\(label): used the \(source.kind) source")
+                check(size > 10_000, "\(label): downloaded \(size / 1024) KB to scratch")
+                let file = try AVAudioFile(forReading: url)
+                check(file.length > 0, "\(label): AVFoundation opened it (\(file.length) frames)")
+                print("       \(label) fetched in \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
+            } catch {
+                check(false, "\(label): \(error)")
+            }
+        }
+
+        print("\n\(failures == 0 ? "remote integration OK" : "\(failures) remote failure(s)")")
+        return failures == 0 ? 0 : 1
     }
 }

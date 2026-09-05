@@ -61,7 +61,7 @@ public final class PlayerEngine {
     private var advancing = false
 
     public init(library: LibraryStore,
-                loader: FallbackTrackLoader = .local(),
+                loader: FallbackTrackLoader = .standard(),
                 resume: ResumeStore = ResumeStore(),
                 defaults: UserDefaults = .standard,
                 randomizer: IndexRandomizer = SystemRandomizer()) {
@@ -264,6 +264,19 @@ public final class PlayerEngine {
         statusText = applied.map { "Output: \($0)" } ?? "Output: system default."
     }
 
+    // MARK: Remote sources
+
+    /// Opens Terminal to run `ssh-add` so an `ssh` / local-network source whose
+    /// key is passphrase-protected can authenticate. Mirrors the "Unlock SSH
+    /// agent" button in the Omarchy widget.
+    public func unlockSSHAgent() {
+        statusText = "Opening Terminal — add your key there, then retry the track."
+        Task {
+            let result = await Task.detached { SSHAgent.unlock() }.value
+            if case .failed(let reason) = result { statusText = reason }
+        }
+    }
+
     // MARK: Queue
 
     public func enqueue(_ index: Int) {
@@ -288,9 +301,10 @@ public final class PlayerEngine {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (url, _) = try await loader.loadTrack(track)
+                let (url, source) = try await loader.loadTrack(track)
                 if Task.isCancelled { return }
                 try self.audio.load(url: url, playing: !startPaused)
+                ScratchFile.prune(keeping: source.kind == .local ? [] : [source])
                 self.onTrackStarted(track: track, index: index, resumeAt: resumeAt, paused: startPaused)
             } catch {
                 if Task.isCancelled || (error as? TrackLoadError) == .cancelled { return }

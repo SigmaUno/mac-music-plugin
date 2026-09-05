@@ -16,8 +16,7 @@ public protocol TrackLoader: Sendable {
     func load(_ source: Source) async throws -> URL
 }
 
-/// Milestone 3: local files only. `ssh` / `https` / `network` are added in
-/// milestone 4.
+/// Local files: hands AVFoundation the on-disk path directly, no copy.
 public struct LocalTrackLoader: TrackLoader {
     public init() {}
 
@@ -43,8 +42,19 @@ public struct FallbackTrackLoader: TrackLoader {
     }
 
     public static func local() -> FallbackTrackLoader {
-        let l = LocalTrackLoader()
-        return FallbackTrackLoader(loaders: [.local: l])
+        FallbackTrackLoader(loaders: [.local: LocalTrackLoader()])
+    }
+
+    /// Every source kind: local files direct, `https` via `curl`, `ssh` and
+    /// `network` via `cat` over `ssh`. The default the app runs with.
+    public static func standard(fetcher: RemoteFetcher = SystemRemoteFetcher()) -> FallbackTrackLoader {
+        let ssh = SSHTrackLoader(fetcher: fetcher)
+        return FallbackTrackLoader(loaders: [
+            .local: LocalTrackLoader(),
+            .https: HTTPSTrackLoader(fetcher: fetcher),
+            .ssh: ssh,
+            .network: ssh,
+        ])
     }
 
     public func load(_ source: Source) async throws -> URL {
