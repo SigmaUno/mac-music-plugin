@@ -4,9 +4,14 @@ import SwiftUI
 /// grows into the full now-playing / transport / library panel that mirrors the
 /// Omarchy plugin's `PopupCard`.
 ///
-/// Milestone 1: placeholder shell with the paths it will use, plus Quit.
+/// Milestone 2: shows the playlists the `LibraryStore` found, with a track count.
 public struct PlayerPanel: View {
-    public init() {}
+    private let library: LibraryStore
+    @State private var playlists: [(name: String, count: Int)] = []
+
+    public init(library: LibraryStore) {
+        self.library = library
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -24,10 +29,21 @@ public struct PlayerPanel: View {
 
             Divider()
 
-            Text("Library: \(Paths.library.path)")
+            Text("Playlists")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
-                .textSelection(.enabled)
+                .foregroundStyle(.secondary)
+            if playlists.isEmpty {
+                Text("None yet").font(.caption).foregroundStyle(.tertiary)
+            } else {
+                ForEach(playlists, id: \.name) { entry in
+                    HStack {
+                        Text(entry.name == "*" ? "★ all" : entry.name)
+                        Spacer()
+                        Text("\(entry.count)").foregroundStyle(.tertiary).monospacedDigit()
+                    }
+                    .font(.callout)
+                }
+            }
 
             Divider()
 
@@ -35,5 +51,12 @@ public struct PlayerPanel: View {
                 .keyboardShortcut("q")
         }
         .padding(16)
+        .task { reload() }
+    }
+
+    private func reload() {
+        playlists = library.playlistNames().map { name in
+            (name, (try? library.load(name).tracks.count) ?? 0)
+        }
     }
 }

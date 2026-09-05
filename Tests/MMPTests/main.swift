@@ -1,12 +1,13 @@
 import Foundation
-@testable import MacMusicPluginKit
 
-// Milestone 1 — scaffold sanity.
-Harness.test("Paths point under Application Support") {
-    Harness.expect(Paths.support.path.contains("Application Support/MacMusicPlugin"),
-                   "support dir is under Application Support")
-    Harness.expectEqual(Paths.library.lastPathComponent, "library")
-    Harness.expectEqual(Paths.resumeFile.lastPathComponent, ".resume.json")
-}
+// XCTest is unavailable under the Command Line Tools, so the suite is a plain
+// executable. Each *Tests type registers its cases, then Harness.run() prints a
+// summary and exits non-zero on failure.
+
+ScaffoldTests.register()
+ModelCodingTests.register()
+PlaylistNameTests.register()
+ResumeTests.register()
+LibraryStoreTests.register()
 
 Harness.run()
