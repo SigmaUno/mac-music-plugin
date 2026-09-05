@@ -14,8 +14,11 @@ jobs:
       - name: Swift version
         run: swift --version
 
+      # Release build is the shippable executable only. MMPTests uses
+      # `@testable import`, which needs `-enable-testing` (debug-only), so it is
+      # never built in release — it runs below in its own (debug) step.
       - name: Build
-        run: swift build -c release
+        run: swift build -c release --product MacMusicPlugin
 
       - name: Test
         run: swift run MMPTests
