@@ -38,6 +38,55 @@ final class FakeCoverService: CoverService, @unchecked Sendable {
 let jpeg1x1 = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x00, count: 20))
 let png1x1 = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] + Array(repeating: 0x00, count: 20))
 
+// MARK: - Binary fixture builders (FLAC / Vorbis-comment / Ogg)
+
+func u32le(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 24 & 0xFF)] }
+func u32be(_ v: Int) -> [UInt8] { [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
+
+/// A FLAC PICTURE block / `METADATA_BLOCK_PICTURE` payload wrapping `image`.
+func flacPictureBlock(mime: String = "image/png", image: [UInt8]) -> [UInt8] {
+    u32be(3) + u32be(mime.utf8.count) + Array(mime.utf8) + u32be(0)
+        + u32be(1) + u32be(1) + u32be(8) + u32be(0) + u32be(image.count) + image
+}
+
+/// A Vorbis comment list body: `<u32le vendorLen><vendor><u32le count>(<u32le len><FIELD=value>)*`.
+func vorbisCommentBody(vendor: String = "test", comments: [String]) -> [UInt8] {
+    var b = u32le(vendor.utf8.count) + Array(vendor.utf8) + u32le(comments.count)
+    for c in comments { b += u32le(c.utf8.count) + Array(c.utf8) }
+    return b
+}
+
+/// An Ogg page for `serial` with a pre-built segment table.
+func oggPageRaw(serial: Int, sequence: Int, segTable: [UInt8], body: [UInt8], continued: Bool) -> [UInt8] {
+    var page: [UInt8] = Array("OggS".utf8) + [0x00, continued ? 0x01 : 0x00]
+    page += Array(repeating: 0x00, count: 8)             // granule position
+    page += u32le(serial) + u32le(sequence) + u32le(0)   // serial, seq, CRC (unchecked)
+    page += [UInt8(segTable.count)] + segTable + body
+    return page
+}
+
+/// One Ogg page carrying whole `packets` for `serial`. Each packet is laced into
+/// 255-byte segments plus a terminating segment < 255 (0 when it divides evenly).
+func oggPage(serial: Int, sequence: Int, packets: [[UInt8]], continued: Bool = false) -> [UInt8] {
+    var segTable: [UInt8] = []
+    var body: [UInt8] = []
+    for packet in packets {
+        var remaining = packet.count
+        while remaining >= 255 { segTable.append(255); remaining -= 255 }
+        segTable.append(UInt8(remaining))
+        body += packet
+    }
+    return oggPageRaw(serial: serial, sequence: sequence, segTable: segTable, body: body, continued: continued)
+}
+
+/// A page holding one chunk of a packet that continues onto the next page: the
+/// chunk is emitted as pure 255-lacing segments and must be a multiple of 255.
+func oggContinuationPage(serial: Int, sequence: Int, chunk: [UInt8], continued: Bool) -> [UInt8] {
+    precondition(chunk.count % 255 == 0 && !chunk.isEmpty)
+    return oggPageRaw(serial: serial, sequence: sequence,
+                      segTable: Array(repeating: 255, count: chunk.count / 255), body: chunk, continued: continued)
+}
+
 enum MetadataCoverTests {
     // A trimmed iTunes Search API response (real field names and escaping).
     static let itunesJSON = """
@@ -156,19 +205,12 @@ enum MetadataCoverTests {
         }
 
         Harness.test("FLACMetadata parses Vorbis comments and an embedded PICTURE") {
-            func u32le(_ v: UInt32) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 24 & 0xFF)] }
-            func u32be(_ v: UInt32) -> [UInt8] { [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
             func block(_ type: UInt8, _ body: [UInt8], last: Bool) -> [UInt8] {
-                [(last ? 0x80 : 0) | type] + [UInt8(body.count >> 16 & 0xFF), UInt8(body.count >> 8 & 0xFF), UInt8(body.count & 0xFF)] + body
+                [(last ? 0x80 : 0) | type]
+                    + [UInt8(body.count >> 16 & 0xFF), UInt8(body.count >> 8 & 0xFF), UInt8(body.count & 0xFF)] + body
             }
-
-            let comments = ["TITLE=Voyager", "ARTIST=Daft Punk", "album=random access memories"]
-            var vc: [UInt8] = u32le(6) + Array("vendor".utf8) + u32le(UInt32(comments.count))
-            for c in comments { vc += u32le(UInt32(c.utf8.count)) + Array(c.utf8) }
-
-            let pic = Array(png1x1)
-            var picBlock: [UInt8] = u32be(3) + u32be(9) + Array("image/png".utf8) + u32be(0)
-            picBlock += u32be(1) + u32be(1) + u32be(8) + u32be(0) + u32be(UInt32(pic.count)) + pic
+            let vc = vorbisCommentBody(comments: ["TITLE=Voyager", "ARTIST=Daft Punk", "album=random access memories"])
+            let picBlock = flacPictureBlock(image: Array(png1x1))
 
             let flac = Data(Array("fLaC".utf8) + block(4, vc, last: false) + block(6, picBlock, last: true))
             guard let meta = FLACMetadata.parse(flac) else { Harness.expect(false, "parsed"); return }
@@ -178,6 +220,62 @@ enum MetadataCoverTests {
             Harness.expect(meta.artwork != nil && ImageKind.sniff(meta.artwork!) == .png, "PICTURE extracted")
 
             Harness.expect(FLACMetadata.parse(Data("ID3\u{03}not a flac".utf8)) == nil, "non-FLAC rejected")
+        }
+
+        Harness.test("VorbisComment decodes METADATA_BLOCK_PICTURE and legacy COVERART") {
+            let b64pic = Data(flacPictureBlock(image: Array(jpeg1x1))).base64EncodedString()
+            var viaBlock = ExtractedMetadata()
+            VorbisComment.parse(vorbisCommentBody(comments: ["TITLE=X", "METADATA_BLOCK_PICTURE=\(b64pic)"]), into: &viaBlock)
+            Harness.expect(viaBlock.artwork.map { ImageKind.sniff($0) } == .some(.jpeg), "art via METADATA_BLOCK_PICTURE")
+
+            let b64raw = png1x1.base64EncodedString()
+            var viaCoverart = ExtractedMetadata()
+            VorbisComment.parse(vorbisCommentBody(comments: ["COVERART=\(b64raw)"]), into: &viaCoverart)
+            Harness.expect(viaCoverart.artwork.map { ImageKind.sniff($0) } == .some(.png), "art via legacy COVERART")
+        }
+
+        Harness.test("OggMetadata: Opus (OpusTags) and Vorbis (\\x03vorbis) comment headers") {
+            let pic = "METADATA_BLOCK_PICTURE=" + Data(flacPictureBlock(image: Array(png1x1))).base64EncodedString()
+            let body = vorbisCommentBody(comments: ["TITLE=Get Lucky", "ARTIST=Daft Punk", "ALBUM=RAM", pic])
+
+            let opusHead = Array("OpusHead".utf8) + Array(repeating: 0x00, count: 11)
+            let opusTags = Array("OpusTags".utf8) + body
+            let opus = Data(oggPage(serial: 42, sequence: 0, packets: [opusHead, opusTags]))
+            guard let m = OggMetadata.parse(opus) else { Harness.expect(false, "opus parsed"); return }
+            Harness.expectEqual(m.title, "Get Lucky")
+            Harness.expectEqual(m.artist, "Daft Punk")
+            Harness.expectEqual(m.album, "RAM")
+            Harness.expect(m.artwork != nil, "opus embedded art")
+
+            let vorbisID = [0x01] + Array("vorbis".utf8) + Array(repeating: 0x00, count: 22)
+            let vorbisComment = [0x03] + Array("vorbis".utf8) + body + [0x01]   // trailing framing bit
+            let ogg = Data(oggPage(serial: 7, sequence: 0, packets: [vorbisID, vorbisComment]))
+            guard let v = OggMetadata.parse(ogg) else { Harness.expect(false, "vorbis parsed"); return }
+            Harness.expectEqual(v.title, "Get Lucky")
+            Harness.expect(v.artwork != nil, "vorbis embedded art survives the framing bit")
+
+            Harness.expect(OggMetadata.parse(Data("RIFF....WAVEfmt ".utf8)) == nil, "non-Ogg rejected")
+        }
+
+        Harness.test("OggMetadata: a comment packet spanning two pages") {
+            let filler = String(repeating: "x", count: 900)
+            let body = vorbisCommentBody(comments: ["TITLE=Long One", "ARTIST=A", "ALBUM=\(filler)"])
+            let head = Array("OpusHead".utf8) + Array(repeating: 0x00, count: 11)
+            let tags = Array("OpusTags".utf8) + body
+
+            // page 0: the identification packet.
+            // page 1: a 510-byte chunk of the comment packet (pure 255 lacing -> continues).
+            // page 2 (continued): the remainder, ending on a < 255 boundary.
+            let split = 510
+            let page0 = oggPage(serial: 1, sequence: 0, packets: [head])
+            let page1 = oggContinuationPage(serial: 1, sequence: 1, chunk: Array(tags[..<split]), continued: false)
+            let page2 = oggPage(serial: 1, sequence: 2, packets: [Array(tags[split...])], continued: true)
+
+            guard let m = OggMetadata.parse(Data(page0 + page1 + page2)) else {
+                Harness.expect(false, "spanning packet parsed"); return
+            }
+            Harness.expectEqual(m.title, "Long One")
+            Harness.expectEqual(m.album, filler)
         }
 
         Harness.testAsync("addLocalFile imports real tags, else falls back to the file name") {

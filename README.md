@@ -52,9 +52,10 @@ existing library, copy that plugin's `library/` directory contents into this fol
 4. ~~Remote sources — HTTPS (`curl`), SSH and local network (`cat` over `ssh`,
    connection‑hardened and multiplexed); each streamed to a scratch file, tried
    in turn on failure; "Unlock SSH agent" for passphrase‑protected keys.~~
-5. ~~Metadata + cover art — tag import on add (AVFoundation, plus a native FLAC
-   Vorbis‑comment / PICTURE reader); embedded art shown at play time; an iTunes
-   Search cover chooser that stores the pick beside the library.~~ ← current
+5. ~~Metadata + cover art — tag import on add (AVFoundation, plus native
+   Vorbis‑comment readers for FLAC and Ogg / Opus that AVFoundation ignores on
+   macOS); embedded art shown at play time; an iTunes Search cover chooser that
+   stores the pick beside the library.~~ ← current
 6. Full player panel UI.
 7. Directory scanning.
 8. Polish, Open‑at‑Login, docs.

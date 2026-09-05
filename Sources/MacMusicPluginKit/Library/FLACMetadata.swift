@@ -37,11 +37,11 @@ enum FLACMetadata {
             let bodyStart = offset + 4
             let bodyEnd = bodyStart + length
             guard bodyEnd <= bytes.count else { break }
-            let body = bytes[bodyStart..<bodyEnd]
+            let body = Array(bytes[bodyStart ..< bodyEnd])
 
             switch blockType {
-            case 4: parseVorbisComment(Array(body), into: &result)
-            case 6: parsePicture(Array(body), into: &result)
+            case 4: VorbisComment.parse(body, into: &result)
+            case 6: VorbisComment.parsePicture(body, into: &result)
             default: break
             }
 
@@ -49,60 +49,5 @@ enum FLACMetadata {
             offset = bodyEnd
         }
         return result.isEmpty ? nil : result
-    }
-
-    /// `<u32 LE vendor len><vendor><u32 LE count>( <u32 LE len><FIELD=value> )*`
-    private static func parseVorbisComment(_ b: [UInt8], into result: inout ExtractedMetadata) {
-        var p = 0
-        guard let vendorLen = readUInt32LE(b, &p), advance(&p, by: Int(vendorLen), limit: b.count) else { return }
-        guard let count = readUInt32LE(b, &p) else { return }
-        for _ in 0..<min(count, 512) {
-            guard let len = readUInt32LE(b, &p), p + Int(len) <= b.count else { return }
-            let comment = String(decoding: b[p..<p + Int(len)], as: UTF8.self)
-            p += Int(len)
-            guard let eq = comment.firstIndex(of: "=") else { continue }
-            let field = comment[..<eq].uppercased()
-            let value = String(comment[comment.index(after: eq)...])
-            switch field {
-            case "TITLE" where !hasRealText(result.title): result.title = value
-            case "ARTIST" where !hasRealText(result.artist): result.artist = value
-            case "ALBUM" where !hasRealText(result.album): result.album = value
-            default: break
-            }
-        }
-    }
-
-    /// `<u32 BE type><u32 BE mimeLen><mime><u32 BE descLen><desc>`
-    /// `<u32 BE w><u32 BE h><u32 BE depth><u32 BE colors><u32 BE dataLen><data>`
-    private static func parsePicture(_ b: [UInt8], into result: inout ExtractedMetadata) {
-        guard result.artwork == nil else { return }
-        var p = 0
-        guard let _ = readUInt32BE(b, &p) else { return }                    // picture type
-        guard let mimeLen = readUInt32BE(b, &p), advance(&p, by: Int(mimeLen), limit: b.count) else { return }
-        guard let descLen = readUInt32BE(b, &p), advance(&p, by: Int(descLen), limit: b.count) else { return }
-        guard advance(&p, by: 16, limit: b.count) else { return }            // w, h, depth, colors
-        guard let dataLen = readUInt32BE(b, &p), p + Int(dataLen) <= b.count else { return }
-        let image = Data(b[p..<p + Int(dataLen)])
-        if ImageKind.sniff(image) != nil { result.artwork = image }
-    }
-
-    // MARK: byte helpers
-
-    private static func advance(_ p: inout Int, by n: Int, limit: Int) -> Bool {
-        guard n >= 0, p + n <= limit else { return false }
-        p += n
-        return true
-    }
-
-    private static func readUInt32LE(_ b: [UInt8], _ p: inout Int) -> UInt32? {
-        guard p + 4 <= b.count else { return nil }
-        defer { p += 4 }
-        return UInt32(b[p]) | UInt32(b[p + 1]) << 8 | UInt32(b[p + 2]) << 16 | UInt32(b[p + 3]) << 24
-    }
-
-    private static func readUInt32BE(_ b: [UInt8], _ p: inout Int) -> UInt32? {
-        guard p + 4 <= b.count else { return nil }
-        defer { p += 4 }
-        return UInt32(b[p]) << 24 | UInt32(b[p + 1]) << 16 | UInt32(b[p + 2]) << 8 | UInt32(b[p + 3])
     }
 }

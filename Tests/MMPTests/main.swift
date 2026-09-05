@@ -26,6 +26,13 @@ if let i = CommandLine.arguments.firstIndex(of: "--remote"),
     exit(Int32(code))
 }
 
+// `swift run MMPTests --tags <file>...` prints the tags + embedded art each
+// file yields through the real reader (FLAC/Ogg go via the native parsers).
+if let i = CommandLine.arguments.firstIndex(of: "--tags"), i + 1 < CommandLine.arguments.count {
+    let code = await IntegrationRunner.runTags(files: Array(CommandLine.arguments[(i + 1)...]))
+    exit(Int32(code))
+}
+
 // `swift run MMPTests --cover <audio-file>` imports the file's tags, plays it,
 // reports any embedded artwork, then hits the live iTunes Search API to fetch
 // and apply a cover. Local only — needs network and an audio device.

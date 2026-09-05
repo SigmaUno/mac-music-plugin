@@ -146,6 +146,26 @@ enum IntegrationRunner {
         return failures == 0 ? 0 : 1
     }
 
+    /// Reads tags + embedded art from each file with the real `AVMetadataReader`
+    /// (which routes FLAC/Ogg through the native container parsers). Local only.
+    static func runTags(files: [String]) async -> Int {
+        let reader = AVMetadataReader()
+        var failures = 0
+        for path in files {
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            let m = await reader.read(url)
+            let art = m.artwork.map { "\($0.count) B \(ImageKind.sniff($0).map { "\($0)" } ?? "unknown")" } ?? "none"
+            print("  \(url.lastPathComponent)")
+            print("    title:  \(m.title ?? "<none>")")
+            print("    artist: \(m.artist ?? "<none>")")
+            print("    album:  \(m.album ?? "<none>")")
+            print("    art:    \(art)")
+            if m.isEmpty { print("    FAIL: no metadata extracted"); failures += 1 }
+        }
+        print("\n\(failures == 0 ? "tags OK" : "\(failures) file(s) with no metadata")")
+        return failures == 0 ? 0 : 1
+    }
+
     /// Plays `audioFile`, reports any embedded artwork, then runs a real iTunes
     /// cover search + apply against the live service. Local only — needs network.
     @MainActor

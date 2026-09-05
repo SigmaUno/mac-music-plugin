@@ -75,13 +75,20 @@ public struct AVMetadataReader: MetadataReading {
             }
         }
 
-        // AVFoundation plays FLAC but exposes none of its Vorbis-comment tags or
-        // PICTURE block, so parse those directly and fill any gaps.
-        if url.pathExtension.lowercased() == "flac", let flac = FLACMetadata.read(url) {
-            if !hasRealText(result.title) { result.title = flac.title }
-            if !hasRealText(result.artist) { result.artist = flac.artist }
-            if !hasRealText(result.album) { result.album = flac.album }
-            if result.artwork == nil { result.artwork = flac.artwork }
+        // AVFoundation plays FLAC and Ogg (Vorbis / Opus) but exposes none of
+        // their Vorbis-comment tags or embedded art on macOS, so parse the
+        // container directly and fill any gaps.
+        let container: ExtractedMetadata?
+        switch url.pathExtension.lowercased() {
+        case "flac": container = FLACMetadata.read(url)
+        case "ogg", "oga", "opus": container = OggMetadata.read(url)
+        default: container = nil
+        }
+        if let container {
+            if !hasRealText(result.title) { result.title = container.title }
+            if !hasRealText(result.artist) { result.artist = container.artist }
+            if !hasRealText(result.album) { result.album = container.album }
+            if result.artwork == nil { result.artwork = container.artwork }
         }
 
         return result
