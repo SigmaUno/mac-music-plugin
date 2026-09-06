@@ -62,7 +62,7 @@ struct AddSourceForm: View {
             }
             .padding(.top, 4)
         } label: {
-            Label("Add source", systemImage: "plus.circle").font(.callout)
+            Text("Add source").font(.callout)
         }
     }
 

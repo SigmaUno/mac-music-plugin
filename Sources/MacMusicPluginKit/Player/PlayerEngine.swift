@@ -14,9 +14,21 @@ import Observation
 @Observable
 public final class PlayerEngine {
     // MARK: Now playing
+    /// Menu-bar form: cleaned title with the track number as a ` (NN)` suffix.
     public private(set) var title = ""
     public private(set) var artist = ""
     public private(set) var album = ""
+    /// Player-header form: cleaned title with the track number removed entirely.
+    public private(set) var nowPlayingTitle = ""
+    /// Two-digit track number of the playing row, or "" — folded into the header
+    /// album line as `… (Track NN)` by `nowPlayingAlbum`.
+    public private(set) var currentTrackLabel = ""
+    /// Player-header album line: `album` with a ` (Track NN)` tag.
+    public var nowPlayingAlbum: String {
+        guard !currentTrackLabel.isEmpty else { return album }
+        let base = (album.isEmpty || album == "No Album") ? "" : "\(album) "
+        return "\(base)(Track \(currentTrackLabel))"
+    }
     public private(set) var coverPath: String?
     public private(set) var positionMs = 0
     public private(set) var durationMs = 0
@@ -62,12 +74,15 @@ public final class PlayerEngine {
     private let metadata: MetadataReading
     private let covers: CoverService
     private let coverStore: CoverStore
+    private let prober: MetadataProbing
 
     private var backoff = AutoplayBackoff()
     private var loadTask: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
     private var coverTask: Task<Void, Never>?
+    private var backfillTask: Task<Void, Never>?
+    private var probeTask: Task<Void, Never>?
     private var lastResumeWrite = Date.distantPast
     /// Local file URL backing the current track (a real file or a scratch
     /// download), for on-demand embedded-artwork extraction.
@@ -82,7 +97,8 @@ public final class PlayerEngine {
                 randomizer: IndexRandomizer = SystemRandomizer(),
                 metadata: MetadataReading = AVMetadataReader(),
                 covers: CoverService = SystemCoverService(),
-                coverStore: CoverStore = CoverStore()) {
+                coverStore: CoverStore = CoverStore(),
+                prober: MetadataProbing = SystemMetadataProber()) {
         self.library = library
         self.loader = loader
         self.resume = resume
@@ -91,6 +107,7 @@ public final class PlayerEngine {
         self.metadata = metadata
         self.covers = covers
         self.coverStore = coverStore
+        self.prober = prober
         loadModes()
         audio.onTrackEnded = { [weak self] in self?.handleTrackEnded() }
     }
@@ -126,6 +143,8 @@ public final class PlayerEngine {
         loadTask?.cancel()
         artworkTask?.cancel()
         coverTask?.cancel()
+        backfillTask?.cancel()
+        probeTask?.cancel()
         scanTask?.cancel()
         audio.stop()
     }
@@ -145,6 +164,7 @@ public final class PlayerEngine {
             playingPlaylist = name
             playingTracks = viewedTracks
         }
+        probeViewedPlaylist()
     }
 
     private func reloadViewed() {
@@ -257,7 +277,13 @@ public final class PlayerEngine {
             reloadViewed()
             if viewedPlaylist == playingPlaylist, selectedIndex >= 0,
                selectedIndex < playingTracks.count, playingTracks[selectedIndex].id == id {
-                self.title = title.isEmpty ? "No song loaded" : title
+                let edited = Track(title: title, artist: artist, album: album)
+                let pos = selectedIndex + 1
+                self.title = title.isEmpty ? "No song loaded"
+                    : TrackTitle.display(edited, position: pos, number: .suffix)
+                self.nowPlayingTitle = title.isEmpty ? "No song loaded"
+                    : TrackTitle.display(edited, position: pos, number: .omit)
+                self.currentTrackLabel = title.isEmpty ? "" : TrackTitle.numberLabel(edited, position: pos)
                 self.artist = artist.isEmpty ? "No Artist" : artist
                 self.album = album.isEmpty ? "No Album" : album
             }
@@ -457,11 +483,13 @@ public final class PlayerEngine {
     public func stop() {
         loadTask?.cancel()
         artworkTask?.cancel()
+        backfillTask?.cancel()
         audio.stop()
         isPlaying = false
         isLoading = false
         selectedIndex = -1
         title = ""; artist = ""; album = ""; coverPath = nil
+        nowPlayingTitle = ""; currentTrackLabel = ""
         playingURL = nil
         positionMs = 0; durationMs = 0
         advancing = false
@@ -645,6 +673,147 @@ public final class PlayerEngine {
         }
     }
 
+    /// Reads tags and embedded art off the just-started track's local file and,
+    /// for a track whose row is still a scan placeholder, writes the real
+    /// artist / album / cover back into the library and the now-playing panel.
+    /// The C backend probed every file over ssh during a scan; this port stages
+    /// fast and fills the gaps the first time a track actually plays.
+    private func backfillNowPlaying(track: Track, index: Int) {
+        guard let url = playingURL else { return }
+        let wantArtist = MetadataPlaceholder.isUnset(track.artist, matching: MetadataPlaceholder.artist)
+        let wantAlbum = MetadataPlaceholder.isUnset(track.album, matching: MetadataPlaceholder.album)
+        let wantCover = track.cover == nil
+        guard wantArtist || wantAlbum || wantCover else { return }
+
+        let keys = Set(track.sources.map(\.dedupKey))
+        guard !keys.isEmpty else { return }
+        let trackID = track.id
+        let reader = metadata
+
+        backfillTask?.cancel()
+        backfillTask = Task { [weak self] in
+            let tags = await reader.read(url)
+            guard let self, !Task.isCancelled, self.playingURL == url else { return }
+
+            let newArtist = wantArtist && hasRealText(tags.artist) ? tags.artist : nil
+            let newAlbum = wantAlbum && hasRealText(tags.album) ? tags.album : nil
+            var newCover: String?
+            if wantCover, let art = tags.artwork, ImageKind.sniff(art) != nil {
+                newCover = try? self.coverStore.store(art).path
+            }
+            guard newArtist != nil || newAlbum != nil || newCover != nil else { return }
+
+            let wrote: (artist: Bool, album: Bool, cover: Bool)
+            do {
+                wrote = try self.library.backfillMetadata(forSourceKeys: keys,
+                                                          artist: newArtist, album: newAlbum,
+                                                          cover: newCover)
+            } catch {
+                if let newCover { self.coverStore.removeIfOwned(newCover) }
+                return
+            }
+            if let newCover, !wrote.cover { self.coverStore.removeIfOwned(newCover) }
+            guard wrote.artist || wrote.album || wrote.cover else { return }
+
+            self.reloadViewed()
+            guard self.selectedIndex == index, index < self.playingTracks.count,
+                  self.playingTracks[index].id == trackID else { return }
+            if wrote.artist, let newArtist { self.artist = newArtist }
+            if wrote.album, let newAlbum { self.album = newAlbum }
+            if wrote.cover, let newCover, self.coverPath == nil { self.coverPath = newCover }
+        }
+    }
+
+    // MARK: On-view metadata probe
+
+    private struct ProbeJob: Sendable {
+        let sources: [Source]   // the ssh / network sources of one track
+        let wantCover: Bool
+    }
+
+    /// For every viewed row that is still a scan placeholder and has a remote
+    /// source, fetch just the front of the file over `ssh` and fill in its real
+    /// artist / album (and cover, if it rode along in the prefix). Runs a few at
+    /// a time in the background and is replaced whenever the view changes, so
+    /// opening a freshly scanned playlist populates it without playing a note.
+    private func probeViewedPlaylist() {
+        let jobs = viewedTracks.compactMap { track -> ProbeJob? in
+            let remote = track.sources.filter { $0.kind == .ssh || $0.kind == .network }
+            guard !remote.isEmpty,
+                  MetadataPlaceholder.isUnset(track.artist, matching: MetadataPlaceholder.artist)
+                    || MetadataPlaceholder.isUnset(track.album, matching: MetadataPlaceholder.album)
+            else { return nil }
+            return ProbeJob(sources: remote, wantCover: track.cover == nil)
+        }
+        guard !jobs.isEmpty else { return }
+        let prober = self.prober
+
+        probeTask?.cancel()
+        probeTask = Task { [weak self] in
+            var wroteAny = false
+            await withTaskGroup(of: (ProbeJob, ExtractedMetadata)?.self) { group in
+                let maxConcurrent = 4
+                var next = jobs.makeIterator()
+                func pump() { if let job = next.next() { group.addTask { await Self.runProbe(job, prober: prober) } } }
+                for _ in 0..<maxConcurrent { pump() }
+                while let result = await group.next() {
+                    pump()
+                    guard let self, !Task.isCancelled else { continue }
+                    if let (job, meta) = result, self.applyProbe(job, meta) {
+                        wroteAny = true
+                        self.reloadViewed()   // let rows fill in as each probe lands
+                    }
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            if wroteAny { try? self.library.rebuildStar() }
+            self.reloadViewed()
+        }
+    }
+
+    private static func runProbe(_ job: ProbeJob, prober: MetadataProbing) async -> (ProbeJob, ExtractedMetadata)? {
+        for source in job.sources {
+            let meta = await prober.probe(source)
+            if hasRealText(meta.artist) || hasRealText(meta.album) || meta.artwork != nil {
+                return (job, meta)
+            }
+            if Task.isCancelled { break }
+        }
+        return nil
+    }
+
+    /// Writes one probed track's new fields into every playlist that holds it.
+    /// `backfillMetadata` only touches rows still at a placeholder, so a value
+    /// filled by a concurrent play-time backfill is never clobbered.
+    private func applyProbe(_ job: ProbeJob, _ meta: ExtractedMetadata) -> Bool {
+        let keys = Set(job.sources.map(\.dedupKey))
+        let artist = hasRealText(meta.artist) ? meta.artist : nil
+        let album = hasRealText(meta.album) ? meta.album : nil
+        var cover: String?
+        if job.wantCover, let art = meta.artwork, ImageKind.sniff(art) != nil {
+            cover = try? coverStore.store(art).path
+        }
+        guard artist != nil || album != nil || cover != nil else { return false }
+
+        let wrote: (artist: Bool, album: Bool, cover: Bool)
+        do {
+            wrote = try library.backfillMetadata(forSourceKeys: keys, artist: artist, album: album,
+                                                 cover: cover, rebuildStarAfter: false)
+        } catch {
+            if let cover { coverStore.removeIfOwned(cover) }
+            return false
+        }
+        if let cover, !wrote.cover { coverStore.removeIfOwned(cover) }
+
+        if selectedIndex >= 0, selectedIndex < playingTracks.count,
+           playingTracks[selectedIndex].sources.contains(where: { keys.contains($0.dedupKey) }) {
+            if wrote.artist, let artist { self.artist = artist }
+            if wrote.album, let album { self.album = album }
+            if wrote.cover, let cover, coverPath == nil { coverPath = cover }
+        }
+        return wrote.artist || wrote.album || wrote.cover
+    }
+
     // MARK: Track loading
 
     private func start(index: Int, resumeAt: Int = 0, startPaused: Bool = false) {
@@ -673,11 +842,15 @@ public final class PlayerEngine {
     private func onTrackStarted(track: Track, index: Int, resumeAt: Int, paused: Bool) {
         isLoading = false
         selectedIndex = index
-        title = track.title
+        let pos = index + 1
+        title = TrackTitle.display(track, position: pos, number: .suffix)
+        nowPlayingTitle = TrackTitle.display(track, position: pos, number: .omit)
+        currentTrackLabel = TrackTitle.numberLabel(track, position: pos)
         artist = track.artist.isEmpty ? "No Artist" : track.artist
         album = track.album.isEmpty ? "No Album" : track.album
         coverPath = resolvedCoverPath(for: track)
         refreshNowPlayingArtwork(userCover: coverPath)
+        backfillNowPlaying(track: track, index: index)
         durationMs = audio.durationMs
         backoff.recordSuccess()
 

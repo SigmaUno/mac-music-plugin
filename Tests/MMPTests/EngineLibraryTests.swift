@@ -49,6 +49,29 @@ enum EngineLibraryTests {
             Harness.expectEqual(e.viewedTracks.count, 0)
         }
 
+        Harness.testAsync("viewing a playlist backfills placeholder ssh rows without playing") {
+            let (dir, cleanup) = Harness.tempDir("eng-probe"); defer { cleanup() }
+            let store = LibraryStore(directory: dir.appendingPathComponent("library"))
+            try store.bootstrap()
+            var home = try store.load("home")
+            home.tracks = [Track(title: "Weird Fishes", artist: "Unknown artist", album: "Unknown album",
+                                 sources: [Source(kind: .ssh, path: "/m/wf.flac", username: "u", ip: "1.2.3.4")])]
+            try store.save(home)
+
+            let defaults = UserDefaults(suiteName: "mmp-probe-\(UUID().uuidString)")!
+            let e = PlayerEngine(library: store, loader: .local(), defaults: defaults,
+                                 metadata: StubMetadata(), covers: StubCovers(),
+                                 prober: StubProber(meta: ExtractedMetadata(artist: "Radiohead", album: "In Rainbows")))
+            e.refreshPlaylists()
+            e.viewPlaylist("home")
+            try await Task.sleep(for: .milliseconds(150))
+
+            Harness.expectEqual(e.viewedTracks.first?.artist, "Radiohead", "panel list updated")
+            Harness.expectEqual(e.viewedTracks.first?.album, "In Rainbows")
+            Harness.expectEqual(try store.load("home").tracks[0].artist, "Radiohead",
+                                "written to disk, not just held in memory")
+        }
+
         Harness.testAsync("acceptIncoming moves a staged track and returns to target") {
             let (dir, cleanup) = Harness.tempDir("eng-incoming"); defer { cleanup() }
             let store = LibraryStore(directory: dir.appendingPathComponent("library"))
@@ -77,4 +100,9 @@ private struct StubMetadata: MetadataReading {
 private struct StubCovers: CoverService {
     func search(term: String) async throws -> [CoverResult] { [] }
     func downloadImage(from url: String) async throws -> Data { Data() }
+}
+
+private struct StubProber: MetadataProbing {
+    let meta: ExtractedMetadata
+    func probe(_ source: Source) async -> ExtractedMetadata { meta }
 }

@@ -324,5 +324,43 @@ enum MetadataCoverTests {
             Harness.expect(service.downloadedURLs.isEmpty, "no download without a playing track")
             Harness.expect(engine.coverResults.isEmpty, "no results published")
         }
+
+        Harness.testAsync("play-time backfill: real tags + art replace a scan placeholder row") {
+            let (dir, cleanup) = Harness.tempDir("backfill-e2e")
+            defer { cleanup() }
+
+            // A real FLAC file: tags + embedded PICTURE, no audio frames —
+            // enough for AVMetadataReader's container-parser fallback.
+            func block(_ type: UInt8, _ body: [UInt8], last: Bool) -> [UInt8] {
+                [(last ? 0x80 : 0) | type]
+                    + [UInt8(body.count >> 16 & 0xFF), UInt8(body.count >> 8 & 0xFF), UInt8(body.count & 0xFF)] + body
+            }
+            let vc = vorbisCommentBody(comments: ["TITLE=Weird Fishes", "ARTIST=Radiohead", "ALBUM=In Rainbows"])
+            let pic = flacPictureBlock(mime: "image/jpeg", image: Array(jpeg1x1))
+            let flacURL = dir.appendingPathComponent("track.flac")
+            try Data(Array("fLaC".utf8) + block(4, vc, last: false) + block(6, pic, last: true)).write(to: flacURL)
+
+            let store = LibraryStore(directory: dir.appendingPathComponent("library"))
+            try store.bootstrap()
+            let src = Source(kind: .local, path: flacURL.path)
+            _ = try store.addSource(src, metadata: TrackMetadata(title: "track",
+                                                                 artist: "Unknown artist", album: "Unknown album"),
+                                    toPlaylist: "home")
+
+            let tags = await AVMetadataReader().read(flacURL)
+            Harness.expectEqual(tags.artist, "Radiohead", "reader pulled the Vorbis ARTIST")
+            Harness.expectEqual(tags.album, "In Rainbows")
+            Harness.expect(tags.artwork.map { ImageKind.sniff($0) } == .some(.jpeg), "embedded PICTURE read")
+
+            let cover = try CoverStore(directory: dir.appendingPathComponent("covers")).store(tags.artwork!).path
+            let wrote = try store.backfillMetadata(forSourceKeys: [src.dedupKey],
+                                                   artist: tags.artist, album: tags.album, cover: cover)
+            Harness.expect(wrote.artist && wrote.album && wrote.cover, "all three written")
+
+            let row = try store.load("home").tracks[0]
+            Harness.expectEqual(row.artist, "Radiohead")
+            Harness.expectEqual(row.album, "In Rainbows")
+            Harness.expectEqual(row.cover, cover)
+        }
     }
 }

@@ -65,7 +65,7 @@ final class AudioPlayer {
     /// Opens `url`, rebuilds the graph for its format, and starts playing from
     /// the top. Throws if the file cannot be opened or the engine cannot start.
     func load(url: URL, playing: Bool) throws {
-        let audioFile = try AVAudioFile(forReading: url)
+        let audioFile = try Self.openForReading(url)
         stopInternal()
 
         file = audioFile
@@ -84,6 +84,18 @@ final class AudioPlayer {
         schedule(fromFrame: 0)
         isPlaying = playing
         if playing { player.play() }
+    }
+
+    /// Opens `url`, retrying once against a metadata-repaired copy when Core
+    /// Audio rejects an otherwise-playable FLAC (see `FLACMetadataRepair`).
+    private static func openForReading(_ url: URL) throws -> AVAudioFile {
+        do {
+            return try AVAudioFile(forReading: url)
+        } catch {
+            guard let repaired = FLACMetadataRepair.repairedCopy(of: url, at: Paths.repairScratch)
+            else { throw error }
+            return try AVAudioFile(forReading: repaired)
+        }
     }
 
     // MARK: Transport

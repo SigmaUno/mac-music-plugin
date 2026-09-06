@@ -93,6 +93,46 @@ enum LibraryStoreTests {
             Harness.expect(t.cover == nil, "cover cleared")
         }
 
+        Harness.test("backfillMetadata fills scan placeholders, never a real value") {
+            let (store, cleanup) = freshStore()
+            defer { cleanup() }
+            try store.bootstrap()
+            let src = Source(kind: .ssh, path: "/m/a.flac", username: "u", ip: "1.2.3.4")
+            let key = src.dedupKey
+
+            _ = try store.addSource(src, metadata: meta("A Song", "Unknown artist", "Unknown album"),
+                                    toPlaylist: "home")
+            _ = try store.addSource(src, metadata: meta("A Song", "Real Band", "Unknown album"),
+                                    toPlaylist: "rock")
+
+            let wrote = try store.backfillMetadata(forSourceKeys: [key],
+                                                   artist: "Tag Artist", album: "Tag Album", cover: "/c.jpg")
+            Harness.expect(wrote.artist && wrote.album && wrote.cover, "all three written somewhere")
+
+            let home = try store.load("home").tracks[0]
+            Harness.expectEqual(home.artist, "Tag Artist", "home placeholder filled")
+            Harness.expectEqual(home.album, "Tag Album")
+            Harness.expectEqual(home.cover, "/c.jpg")
+
+            let rock = try store.load("rock").tracks[0]
+            Harness.expectEqual(rock.artist, "Real Band", "a real artist is left alone")
+            Harness.expectEqual(rock.album, "Tag Album", "but the placeholder album is still filled")
+
+            let again = try store.backfillMetadata(forSourceKeys: [key],
+                                                   artist: "Other", album: "Other", cover: "/d.jpg")
+            Harness.expect(!again.artist && !again.album && !again.cover, "nothing left once placeholders are gone")
+            Harness.expectEqual(try store.load("home").tracks[0].artist, "Tag Artist", "not overwritten on re-run")
+        }
+
+        Harness.test("MetadataPlaceholder.isUnset: blank or the scan placeholder only") {
+            Harness.expect(MetadataPlaceholder.isUnset("", matching: MetadataPlaceholder.artist), "empty is unset")
+            Harness.expect(MetadataPlaceholder.isUnset("   ", matching: MetadataPlaceholder.artist), "blank is unset")
+            Harness.expect(MetadataPlaceholder.isUnset("unknown ARTIST", matching: MetadataPlaceholder.artist),
+                           "placeholder match is case-insensitive")
+            Harness.expect(!MetadataPlaceholder.isUnset("Radiohead", matching: MetadataPlaceholder.artist),
+                           "a real value is not unset")
+        }
+
         Harness.test("removeTrack drops the entry") {
             let (store, cleanup) = freshStore()
             defer { cleanup() }

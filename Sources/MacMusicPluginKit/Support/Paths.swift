@@ -38,6 +38,12 @@ public enum Paths {
     /// Per-run scratch directory for streamed downloads. Removed on quit.
     public static let scratch: URL = caches.appendingPathComponent("scratch", isDirectory: true)
 
+    /// Single reusable file holding the current track's Core Audio-compatible
+    /// copy, when the original FLAC needed its metadata repaired to open. Kept
+    /// out of `scratch/` so download pruning never removes it mid-playback;
+    /// overwritten each track and cleared on launch/quit.
+    public static let repairScratch: URL = caches.appendingPathComponent("coreaudio-repair.flac")
+
     /// Album art pulled out of the currently playing file's tags. Display-only
     /// and overwritten every track — a user-chosen cover (which lives in
     /// `covers/`) always wins. Mirrors the C backend's single `cover.jpg`.
@@ -57,6 +63,7 @@ public enum Paths {
             try? FileManager.default.removeItem(at: dir)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
+        try? FileManager.default.removeItem(at: repairScratch)
         RuntimeDir.clean()
     }
 }
