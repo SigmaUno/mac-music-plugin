@@ -16,8 +16,8 @@ enum TrackTitleTests {
             Harness.expectEqual(s("01 Artrist - Bloom", "Artrist"), "Bloom (01)")
             Harness.expectEqual(s("04 Radiohead - Lewis (Mistreated)", "Radiohead"),
                                 "Lewis (Mistreated) (04)")
-            // No leading track number → nothing is appended.
-            Harness.expectEqual(s("True Love Tape Loop", "Alex G"), "True Love Tape Loop")
+            // No leading track number → "??" stands in.
+            Harness.expectEqual(s("True Love Tape Loop", "Alex G"), "True Love Tape Loop (??)")
         }
 
         Harness.test("track title: prefix form (library list)") {
@@ -26,17 +26,17 @@ enum TrackTitleTests {
             }
             Harness.expectEqual(p("01 Artist Bloom", "Artist"), "01 Bloom")
             Harness.expectEqual(p("04 Radiohead - Lewis (Mistreated)", "Radiohead"), "04 Lewis (Mistreated)")
-            // No leading track number → no prefix.
-            Harness.expectEqual(p("True Love Tape Loop", "Alex G"), "True Love Tape Loop")
+            // No leading track number → "??" prefix.
+            Harness.expectEqual(p("True Love Tape Loop", "Alex G"), "?? True Love Tape Loop")
         }
 
         Harness.test("track title: omit form + number label (player header)") {
             let t = mk("04 Radiohead - Lewis (Mistreated)", "Radiohead")
             Harness.expectEqual(TrackTitle.display(t, number: .omit), "Lewis (Mistreated)")
             Harness.expectEqual(TrackTitle.numberLabel(t), "04")
-            // No leading digits → empty label, not the playlist position.
-            Harness.expectEqual(TrackTitle.numberLabel(mk("True Love Tape Loop")), "")
-            Harness.expectEqual(TrackTitle.numberLabel(mk("Bloom")), "")
+            // No leading digits → "??", not the playlist position.
+            Harness.expectEqual(TrackTitle.numberLabel(mk("True Love Tape Loop")), "??")
+            Harness.expectEqual(TrackTitle.numberLabel(mk("Bloom")), "??")
         }
     }
 }

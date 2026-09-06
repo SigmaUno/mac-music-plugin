@@ -5,6 +5,10 @@ import Foundation
 /// (`01 Radiohead - Lewis (Mistreated)`). This never touches stored metadata —
 /// it is applied as rows are drawn.
 public enum TrackTitle {
+    /// Shown in place of a track number the title does not carry. The track's
+    /// place in the playlist is never substituted.
+    public static let unknownNumber = "??"
+
     /// Where the track number sits relative to the cleaned title.
     public enum Number {
         /// `01 Lewis (Mistreated)` — for the library list.
@@ -18,12 +22,10 @@ public enum TrackTitle {
 
     /// `track.title` with a leading track number and a leading artist name
     /// stripped, and the track number re-attached per `number`. When the title
-    /// carries no leading track number nothing is added — the track's place in
-    /// the playlist is never substituted for a missing number.
+    /// carries no leading track number, `unknownNumber` ("??") stands in.
     public static func display(_ track: Track, number: Number = .suffix) -> String {
         let (title, n) = parse(track)
-        guard let n else { return title }
-        let nn = String(format: "%02d", n)
+        let nn = n.map { String(format: "%02d", $0) } ?? unknownNumber
         switch number {
         case .prefix: return "\(nn) \(title)"
         case .suffix: return "\(title) (\(nn))"
@@ -31,10 +33,10 @@ public enum TrackTitle {
         }
     }
 
-    /// The two-digit track number from the title's own leading digits, or ""
-    /// when it has none.
+    /// The two-digit track number from the title's own leading digits, or
+    /// `unknownNumber` ("??") when it has none.
     public static func numberLabel(_ track: Track) -> String {
-        guard let n = parse(track).number else { return "" }
+        guard let n = parse(track).number else { return unknownNumber }
         return String(format: "%02d", n)
     }
 
