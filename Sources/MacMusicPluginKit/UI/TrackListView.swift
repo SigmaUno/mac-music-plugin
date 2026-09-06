@@ -91,7 +91,7 @@ private struct TrackRow: View {
                 .frame(width: 26, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(TrackTitle.display(track, position: index + 1, number: .prefix)).lineLimit(1)
+                Text(TrackTitle.display(track, number: .prefix)).lineLimit(1)
                 Text("\(track.artist) · \(track.album)")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }

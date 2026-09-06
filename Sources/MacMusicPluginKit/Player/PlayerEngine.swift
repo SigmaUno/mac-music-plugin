@@ -278,12 +278,11 @@ public final class PlayerEngine {
             if viewedPlaylist == playingPlaylist, selectedIndex >= 0,
                selectedIndex < playingTracks.count, playingTracks[selectedIndex].id == id {
                 let edited = Track(title: title, artist: artist, album: album)
-                let pos = selectedIndex + 1
                 self.title = title.isEmpty ? "No song loaded"
-                    : TrackTitle.display(edited, position: pos, number: .suffix)
+                    : TrackTitle.display(edited, number: .suffix)
                 self.nowPlayingTitle = title.isEmpty ? "No song loaded"
-                    : TrackTitle.display(edited, position: pos, number: .omit)
-                self.currentTrackLabel = title.isEmpty ? "" : TrackTitle.numberLabel(edited, position: pos)
+                    : TrackTitle.display(edited, number: .omit)
+                self.currentTrackLabel = title.isEmpty ? "" : TrackTitle.numberLabel(edited)
                 self.artist = artist.isEmpty ? "No Artist" : artist
                 self.album = album.isEmpty ? "No Album" : album
             }
@@ -842,10 +841,9 @@ public final class PlayerEngine {
     private func onTrackStarted(track: Track, index: Int, resumeAt: Int, paused: Bool) {
         isLoading = false
         selectedIndex = index
-        let pos = index + 1
-        title = TrackTitle.display(track, position: pos, number: .suffix)
-        nowPlayingTitle = TrackTitle.display(track, position: pos, number: .omit)
-        currentTrackLabel = TrackTitle.numberLabel(track, position: pos)
+        title = TrackTitle.display(track, number: .suffix)
+        nowPlayingTitle = TrackTitle.display(track, number: .omit)
+        currentTrackLabel = TrackTitle.numberLabel(track)
         artist = track.artist.isEmpty ? "No Artist" : track.artist
         album = track.album.isEmpty ? "No Album" : track.album
         coverPath = resolvedCoverPath(for: track)
