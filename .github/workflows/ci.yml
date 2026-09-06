@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      # Debug build first — it compiles every target (incl. MMPTests) and gives
+      # clearer diagnostics than the filtered release build.
+      - name: Build (debug, all targets)
+        run: swift build
+
+      # Release build is the shippable executable only. MMPTests uses
+      # `@testable import`, which needs `-enable-testing` (debug-only), so it is
+      # never built in release — it runs below in its own (debug) step.
+      - name: Build (release)
+        run: swift build -c release --product MacMusicPlugin
+
+      - name: Test
+        run: swift run MMPTests
+
+      - name: Bundle app
+        run: sh scripts/bundle.sh
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacMusicPlugin.app
+          path: dist/MacMusicPlugin.app
