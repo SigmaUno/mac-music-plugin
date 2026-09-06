@@ -17,9 +17,11 @@ public enum TrackTitle {
     }
 
     /// `track.title` with a leading track number and a leading artist name
-    /// stripped, and the track number re-attached per `number`.
-    public static func display(_ track: Track, position: Int, number: Number = .suffix) -> String {
-        let (title, n) = parse(track, position: position)
+    /// stripped, and the track number re-attached per `number`. When the title
+    /// carries no leading track number nothing is added — the track's place in
+    /// the playlist is never substituted for a missing number.
+    public static func display(_ track: Track, number: Number = .suffix) -> String {
+        let (title, n) = parse(track)
         guard let n else { return title }
         let nn = String(format: "%02d", n)
         switch number {
@@ -29,17 +31,16 @@ public enum TrackTitle {
         }
     }
 
-    /// The two-digit track number for this track — its own leading digits when
-    /// present, else `position`. Empty when neither is usable.
-    public static func numberLabel(_ track: Track, position: Int) -> String {
-        guard let n = parse(track, position: position).number else { return "" }
+    /// The two-digit track number from the title's own leading digits, or ""
+    /// when it has none.
+    public static func numberLabel(_ track: Track) -> String {
+        guard let n = parse(track).number else { return "" }
         return String(format: "%02d", n)
     }
 
     /// (cleaned title, track number). The number comes from the title's own
-    /// leading digits when it has them; otherwise `position` (the track's 1-based
-    /// place in the playlist), or nil when that is not positive.
-    static func parse(_ track: Track, position: Int) -> (title: String, number: Int?) {
+    /// leading digits; nil when it has none.
+    static func parse(_ track: Track) -> (title: String, number: Int?) {
         var rest = track.title.trimmingCharacters(in: .whitespaces)
         var number: Int?
 
@@ -58,6 +59,6 @@ public enum TrackTitle {
         rest = rest.trimmingCharacters(in: .whitespaces)
         if rest.isEmpty { rest = track.title.trimmingCharacters(in: .whitespaces) }
 
-        return (rest, number ?? (position > 0 ? position : nil))
+        return (rest, number)
     }
 }
