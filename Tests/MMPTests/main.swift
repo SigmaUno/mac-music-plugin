@@ -45,6 +45,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--cover"),
 ScaffoldTests.register()
 ModelCodingTests.register()
 PlaylistNameTests.register()
+TrackTitleTests.register()
 ResumeTests.register()
 LibraryStoreTests.register()
 PlayerLogicTests.register()

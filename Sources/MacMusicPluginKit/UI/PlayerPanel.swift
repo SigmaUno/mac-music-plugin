@@ -162,11 +162,11 @@ struct NowPlayingHeader: View {
             .onTapGesture { if engine.selectedIndex >= 0 { showCoverPicker.toggle() } }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(engine.selectedIndex >= 0 ? engine.title : "Nothing playing")
+                Text(engine.selectedIndex >= 0 ? engine.nowPlayingTitle : "Nothing playing")
                     .font(.headline).lineLimit(2)
                 if engine.selectedIndex >= 0 {
                     Text(engine.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                    Text(engine.album).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(engine.nowPlayingAlbum).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
                 } else if engine.isLoading {
                     Text("Loading…").font(.caption).foregroundStyle(.secondary)
                 }

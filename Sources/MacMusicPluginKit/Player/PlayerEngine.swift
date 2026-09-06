@@ -14,9 +14,21 @@ import Observation
 @Observable
 public final class PlayerEngine {
     // MARK: Now playing
+    /// Menu-bar form: cleaned title with the track number as a ` (NN)` suffix.
     public private(set) var title = ""
     public private(set) var artist = ""
     public private(set) var album = ""
+    /// Player-header form: cleaned title with the track number removed entirely.
+    public private(set) var nowPlayingTitle = ""
+    /// Two-digit track number of the playing row, or "" — folded into the header
+    /// album line as `… (Track NN)` by `nowPlayingAlbum`.
+    public private(set) var currentTrackLabel = ""
+    /// Player-header album line: `album` with a ` (Track NN)` tag.
+    public var nowPlayingAlbum: String {
+        guard !currentTrackLabel.isEmpty else { return album }
+        let base = (album.isEmpty || album == "No Album") ? "" : "\(album) "
+        return "\(base)(Track \(currentTrackLabel))"
+    }
     public private(set) var coverPath: String?
     public private(set) var positionMs = 0
     public private(set) var durationMs = 0
@@ -265,7 +277,13 @@ public final class PlayerEngine {
             reloadViewed()
             if viewedPlaylist == playingPlaylist, selectedIndex >= 0,
                selectedIndex < playingTracks.count, playingTracks[selectedIndex].id == id {
-                self.title = title.isEmpty ? "No song loaded" : title
+                let edited = Track(title: title, artist: artist, album: album)
+                let pos = selectedIndex + 1
+                self.title = title.isEmpty ? "No song loaded"
+                    : TrackTitle.display(edited, position: pos, number: .suffix)
+                self.nowPlayingTitle = title.isEmpty ? "No song loaded"
+                    : TrackTitle.display(edited, position: pos, number: .omit)
+                self.currentTrackLabel = title.isEmpty ? "" : TrackTitle.numberLabel(edited, position: pos)
                 self.artist = artist.isEmpty ? "No Artist" : artist
                 self.album = album.isEmpty ? "No Album" : album
             }
@@ -471,6 +489,7 @@ public final class PlayerEngine {
         isLoading = false
         selectedIndex = -1
         title = ""; artist = ""; album = ""; coverPath = nil
+        nowPlayingTitle = ""; currentTrackLabel = ""
         playingURL = nil
         positionMs = 0; durationMs = 0
         advancing = false
@@ -823,7 +842,10 @@ public final class PlayerEngine {
     private func onTrackStarted(track: Track, index: Int, resumeAt: Int, paused: Bool) {
         isLoading = false
         selectedIndex = index
-        title = track.title
+        let pos = index + 1
+        title = TrackTitle.display(track, position: pos, number: .suffix)
+        nowPlayingTitle = TrackTitle.display(track, position: pos, number: .omit)
+        currentTrackLabel = TrackTitle.numberLabel(track, position: pos)
         artist = track.artist.isEmpty ? "No Artist" : track.artist
         album = track.album.isEmpty ? "No Album" : track.album
         coverPath = resolvedCoverPath(for: track)
