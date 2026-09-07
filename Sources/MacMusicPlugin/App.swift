@@ -6,22 +6,19 @@ struct MacMusicPluginApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            PlayerPanel(engine: appDelegate.engine)
-        } label: {
-            MenuBarLabel(engine: appDelegate.engine)
-        }
-        .menuBarExtraStyle(.window)
+        Settings { EmptyView() }
     }
 }
 
-/// Owns process-lifetime setup and teardown. `MenuBarExtra` alone gives no hook
-/// for "app is launching" / "app is quitting", which is where directories are
-/// created, the library is seeded, and the engine is started and stopped.
+/// Owns process-lifetime setup and teardown, and the menu-bar status item.
+/// `MenuBarExtra` gave no hook for "app is launching" / "app is quitting" and no
+/// way to see right-clicks, so the status item is managed directly by
+/// `StatusItemController`.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let library = LibraryStore()
     lazy var engine = PlayerEngine(library: library)
+    private var statusItem: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Paths.bootstrap()
@@ -33,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("MacMusicPlugin: library bootstrap failed: \(error)")
         }
         engine.start()
+        statusItem = StatusItemController(engine: engine)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -83,6 +83,10 @@ public final class PlayerEngine {
     private var coverTask: Task<Void, Never>?
     private var backfillTask: Task<Void, Never>?
     private var probeTask: Task<Void, Never>?
+    /// Warms the download for the track autoplay will most likely play next, so
+    /// the hand-off at track end doesn't stall on a remote fetch.
+    private var prefetchTask: Task<Void, Never>?
+    private var prefetchedTrackID: String?
     private var lastResumeWrite = Date.distantPast
     /// Local file URL backing the current track (a real file or a scratch
     /// download), for on-demand embedded-artwork extraction.
@@ -145,6 +149,7 @@ public final class PlayerEngine {
         coverTask?.cancel()
         backfillTask?.cancel()
         probeTask?.cancel()
+        prefetchTask?.cancel()
         scanTask?.cancel()
         audio.stop()
     }
@@ -483,6 +488,7 @@ public final class PlayerEngine {
         loadTask?.cancel()
         artworkTask?.cancel()
         backfillTask?.cancel()
+        cancelPrefetch()
         audio.stop()
         isPlaying = false
         isLoading = false
@@ -498,8 +504,8 @@ public final class PlayerEngine {
     // MARK: Modes
 
     public func setAutoplay(_ on: Bool) { autoplay = on; persistModes(); statusText = on ? "Autoplay enabled." : "Autoplay disabled." }
-    public func setShuffle(_ on: Bool) { shuffle = on; persistModes(); statusText = on ? "Shuffle on." : "Shuffle off." }
-    public func setRepeatOne(_ on: Bool) { repeatOne = on; persistModes(); statusText = on ? "Repeat one." : "Repeat off." }
+    public func setShuffle(_ on: Bool) { shuffle = on; persistModes(); prefetchNext(); statusText = on ? "Shuffle on." : "Shuffle off." }
+    public func setRepeatOne(_ on: Bool) { repeatOne = on; persistModes(); prefetchNext(); statusText = on ? "Repeat one." : "Repeat off." }
 
     public func setVolume(_ value: Int) {
         volume = max(0, min(100, value))
@@ -544,11 +550,12 @@ public final class PlayerEngine {
         guard index >= 0, index < playingTracks.count else { return }
         guard queue.count < PlayQueue.capacity else { statusText = "Play queue is full (\(PlayQueue.capacity))."; return }
         queue.push(index)
+        prefetchNext()
         statusText = "Queued (\(queue.count) in queue)."
     }
 
-    public func dequeue(_ index: Int) { queue.remove(index: index) }
-    public func clearQueue() { queue.clear(); statusText = "Play queue cleared." }
+    public func dequeue(_ index: Int) { queue.remove(index: index); prefetchNext() }
+    public func clearQueue() { queue.clear(); prefetchNext(); statusText = "Play queue cleared." }
 
     // MARK: Cover art
 
@@ -819,6 +826,9 @@ public final class PlayerEngine {
         guard index >= 0, index < playingTracks.count else { return }
         let track = playingTracks[index]
         loadTask?.cancel()
+        // Stop any in-flight prefetch before our own fetch: two downloads racing
+        // the same scratch file (or `ScratchFile.prune`) would clobber each other.
+        cancelPrefetch()
         isLoading = true
         statusText = "Loading \(track.title)…"
 
@@ -861,6 +871,44 @@ public final class PlayerEngine {
         isPlaying = !paused
         statusText = paused ? "Resumed (paused): \(track.title)" : "Playing \(track.title)."
         writeResume(force: true)
+        prefetchNext()
+    }
+
+    /// Kick off a background download of the track autoplay will most likely play
+    /// next, while the current one is still playing, so the switch at track end is
+    /// seamless instead of stalling on a remote fetch. Best-effort: a wrong guess
+    /// (shuffle landed elsewhere, the queue changed) just means the file is
+    /// fetched normally at track end, exactly as before. Scratch files are keyed
+    /// by source, so a correct guess makes the eventual `loadTrack` return at once.
+    private func prefetchNext() {
+        let count = playingTracks.count
+        guard autoplay, !repeatOne, count > 1, selectedIndex >= 0 else { cancelPrefetch(); return }
+
+        let nextIndex: Int
+        if let head = queue.indices.first(where: { $0 < count }) {
+            nextIndex = head
+        } else if shuffle {
+            cancelPrefetch(); return          // random pick — nothing to warm ahead
+        } else {
+            nextIndex = (selectedIndex + 1) % count
+        }
+        guard nextIndex != selectedIndex else { cancelPrefetch(); return }
+
+        let track = playingTracks[nextIndex]
+        // Local files open straight off disk — there's no fetch to get ahead of.
+        guard let source = track.firstUsableSource, source.kind != .local else { cancelPrefetch(); return }
+        guard prefetchedTrackID != track.id else { return }   // already warming this one
+
+        cancelPrefetch()
+        prefetchedTrackID = track.id
+        let loader = self.loader
+        prefetchTask = Task.detached(priority: .utility) { _ = try? await loader.loadTrack(track) }
+    }
+
+    private func cancelPrefetch() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        prefetchedTrackID = nil
     }
 
     private func onLoadFailed(index: Int, error: Error) {
